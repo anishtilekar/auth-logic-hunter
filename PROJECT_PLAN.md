@@ -6,14 +6,14 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 
 ## STATUS
 
-**Current phase:** Phase 1 — Target app standup (crAPI)
+**Current phase:** Phase 2 — State-Model Builder (Stage 1)
 **Last updated:** 2026-09-01
 **Repo:** [anishtilekar/auth-logic-hunter](https://github.com/anishtilekar/auth-logic-hunter) (private)
 
 | Phase | Name | Status |
 |---|---|---|
 | 0 | Project scaffolding & infra | ✅ Done |
-| 1 | Target app standup (crAPI) | ⬜ Not started |
+| 1 | Target app standup (crAPI) | ✅ Done |
 | 2 | State-Model Builder (Stage 1) | ⬜ Not started |
 | 3 | Backend + frontend skeleton (full-stack vertical slice) | ⬜ Not started |
 | 4 | Invariant Extractor (Stage 2) | ⬜ Not started |
@@ -157,14 +157,16 @@ Tasks:
 **Owner:** Harshada (+ Vijay for docker help).
 
 Tasks:
-- [ ] Vendor crAPI under `/targets/crapi` (git submodule, or a documented pinned-commit copy)
-- [ ] Get crAPI's own docker-compose stack running alongside the project's compose file (decide: separate `docker compose -f` invocation vs. merged network — document whichever you pick)
-- [ ] Confirm OpenAPI spec is reachable at a known local URL
-- [ ] Write a reset script/seed data plan so repeated pipeline runs start from a known state
-- [ ] Document exact startup steps in `/targets/crapi/README.md`
-- [ ] Commit, push
+- [x] Vendor crAPI under `/targets/crapi` — git submodule, pinned to release tag `v1.1.6` (not tracking `develop`)
+- [x] Get crAPI's own docker-compose stack running alongside the project's compose file — decided: **separate `docker compose -f` invocations**, not merged. Verified both stacks running simultaneously with no port conflicts (crAPI's internal `postgresdb` isn't exposed to the host, so no clash with our own Postgres on 5432).
+- [x] Confirm OpenAPI spec is reachable — static file at `targets/crapi/openapi-spec/crapi-openapi-spec.json` (40 endpoints, `servers` already `http://localhost:8888`, zero rewriting needed) **and** live-verified: `curl http://localhost:8888/health` → 200, plus a real `POST /identity/api/auth/signup` call → `{"message":"User registered successfully!...","status":200}`
+- [x] Write a reset script/seed data plan — `targets/crapi-reset.sh` (full wipe via `down -v`) for evaluation runs; documented the cheaper "sign up fresh throwaway users" approach for iterative dev in the README. Note: this lives at `targets/` level, *not* inside `targets/crapi/` — that directory is a git submodule (a clean pinned reference to the upstream repo), so our own docs/scripts stay outside it rather than mixed into someone else's tree.
+- [x] Document exact startup steps in `/targets/README.md` (not inside the submodule — see note above)
+- [x] Commit, push
 
-**What's actually built:** *(fill in when done)*
+**What's actually built:** crAPI is vendored, running, and verified working end-to-end via live HTTP calls (not just "containers report healthy"). Also closed out a Phase 0 loose end while Docker was being debugged: our own `docker/docker-compose.yml` (Postgres + backend) is now verified working too — found and fixed a real bug in `backend/Dockerfile` where the `CMD` used `uv run uvicorn ...`, which silently re-triggers `uv sync` *without* `--no-dev` on every container start, reinstalling ruff/mypy/etc. at runtime; fixed by calling `.venv/bin/uvicorn` directly. Both compose stacks (ours + crAPI's) run simultaneously with no conflicts.
+
+Hit a real, non-trivial blocker along the way, worth recording in case it recurs: Docker Desktop crashed on every launch with `initializing Inference manager: listening on unix://...\Docker\run\dockerInference: The file cannot be accessed by the system.` — an orphaned AF_UNIX socket reparse point from an earlier abnormal exit, which Windows' socket driver held in a stuck "busy" state that no user-mode delete (`rm`, PowerShell `Remove-Item`, `cmd del`/`rd`, `fsutil reparsepoint delete`) could clear. Fixed via Docker Desktop's own "Reset to factory defaults" (cost nothing since no images/volumes existed yet on this install). If this recurs on a teammate's machine: factory-reset Docker Desktop, or reboot Windows (which also clears the stuck kernel-level socket reference), before assuming it's a "slow first launch."
 
 ---
 

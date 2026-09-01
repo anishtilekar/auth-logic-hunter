@@ -1,0 +1,3 @@
+[submodule "targets/crapi"]
+	path = targets/crapi
+	url = https://github.com/OWASP/crAPI.git

@@ -33,5 +33,4 @@ Thumbs.db
 # Logs
 *.log
 
-# crAPI / target apps (vendored separately, see /targets/*/README.md)
-targets/crapi/
+# crAPI is a git submodule (see /targets/crapi) — tracked by reference, not ignored
