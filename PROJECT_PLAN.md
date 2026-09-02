@@ -194,6 +194,8 @@ Tasks:
 
 Not yet wired: the API/frontend don't call this yet — that's explicitly Phase 3's job, not Phase 2's.
 
+**Follow-up fix after first CI run:** the pipeline tests initially passed locally but errored on GitHub Actions — `actions/checkout` doesn't fetch submodule content by default, so `targets/crapi` existed as an empty directory in CI, and the tests' skip-guard checked directory existence (true even when empty) rather than actual file content. Fixed by adding `submodules: true` to the backend job's checkout step and hardening the guards to check for the real spec file. CI now genuinely runs these tests against real crAPI content, confirmed green.
+
 ---
 
 ## Phase 3 — Backend API Skeleton + Frontend Skeleton (full-stack vertical slice)
