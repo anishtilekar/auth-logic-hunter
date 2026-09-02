@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import UTC, datetime
 
@@ -117,13 +118,19 @@ async def _execute_run(run_id: int) -> None:
             await session.commit()
             publish(run_id, {"type": "stage", "stage": "invariants"})
 
-            invariants = extract_invariants(model)
+            # extract_invariants/generate_hypotheses are correctly synchronous
+            # (same functions the CLI calls directly) — but a synchronous network
+            # call executed straight inside this async background task would
+            # block the entire event loop for the LLM round-trip's duration,
+            # freezing every other request the server is handling. Offload to a
+            # thread instead.
+            invariants = await asyncio.to_thread(extract_invariants, model)
             for inv in invariants:
                 session.add(Invariant(run_id=run_id, data=inv.model_dump(mode="json")))
             await session.commit()
             publish(run_id, {"type": "stage", "stage": "hypotheses"})
 
-            hypotheses = generate_hypotheses(model, invariants)
+            hypotheses = await asyncio.to_thread(generate_hypotheses, model, invariants)
             for hyp in hypotheses:
                 session.add(Hypothesis(run_id=run_id, data=hyp.model_dump(mode="json")))
 

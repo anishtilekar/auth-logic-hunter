@@ -13,7 +13,8 @@ uv run uvicorn app.main:app --reload --app-dir src
 
 Stages 2–3 call an LLM through a shared OpenAI-compatible client (`app/pipeline/llm_client.py`), switched by `LLM_ENV` in `.env`:
 
-- `LLM_ENV=dev` (default) — OpenRouter's free-tier GLM 5.2 (`OPENROUTER_API_KEY`). $0 cost, for iteration.
+- `LLM_ENV=dev` (default) — OpenRouter's free-tier GLM 5.2 (`OPENROUTER_API_KEY`). $0 cost, tool-calling confirmed, the safe choice for iteration.
+- `LLM_ENV=nvidia` — build.nvidia.com's free endpoint for DeepSeek V4 Pro (`NVIDIA_API_KEY`). Same model as `prod`, so dev-testing here is representative of real production behavior — but tool-calling support isn't confirmed for this specific endpoint yet, unlike the `dev` tier. Don't use for the actual Phase 11 evaluation numbers even once confirmed working — it's a "prototyping" tier.
 - `LLM_ENV=prod` — Together.ai's DeepSeek V4 Pro (`TOGETHER_API_KEY`). The real model for actual runs and evaluation.
 
 ## Checks
