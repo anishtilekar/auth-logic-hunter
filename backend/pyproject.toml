@@ -9,8 +9,12 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
+    "typer>=0.27.2",
     "uvicorn[standard]>=0.32",
 ]
+
+[project.scripts]
+authhunter = "app.cli.main:app"
 
 [dependency-groups]
 dev = [
@@ -34,6 +38,9 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
 
 [tool.mypy]
 python_version = "3.12"

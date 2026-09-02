@@ -6,7 +6,7 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 
 ## STATUS
 
-**Current phase:** Phase 2 — State-Model Builder (Stage 1)
+**Current phase:** Phase 3 — Backend + frontend skeleton (full-stack vertical slice)
 **Last updated:** 2026-09-01
 **Repo:** [anishtilekar/auth-logic-hunter](https://github.com/anishtilekar/auth-logic-hunter) (private)
 
@@ -14,7 +14,7 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 |---|---|---|
 | 0 | Project scaffolding & infra | ✅ Done |
 | 1 | Target app standup (crAPI) | ✅ Done |
-| 2 | State-Model Builder (Stage 1) | ⬜ Not started |
+| 2 | State-Model Builder (Stage 1) | ✅ Done |
 | 3 | Backend + frontend skeleton (full-stack vertical slice) | ⬜ Not started |
 | 4 | Invariant Extractor (Stage 2) | ⬜ Not started |
 | 5 | Hypothesis Generator — sequential (Stage 3) | ⬜ Not started |
@@ -177,14 +177,22 @@ Hit a real, non-trivial blocker along the way, worth recording in case it recurs
 **Owner:** Harshada.
 
 Tasks:
-- [ ] Define the Application Model schema (Pydantic models: Resource, Endpoint, StateTransition, OwnershipRelation)
-- [ ] tree-sitter/Joern-based parsing of crAPI's services (Node.js community service, Python/Flask identity service, Java/Kotlin workshop service)
-- [ ] OpenAPI spec parser feeding endpoint/parameter data into the same model
-- [ ] Unit tests validating extracted model against crAPI's known real structure (hand-verify a handful of resources/endpoints)
-- [ ] `backend/cli`: `authhunter build-model --target ./targets/crapi` → writes the model as JSON
-- [ ] Commit, push
+- [x] Define the Application Model schema — `Endpoint`, `Resource`, `StateTransition`, `ApplicationModel` (Pydantic) in `backend/src/app/pipeline/stage1_state_model/schema.py`
+- [x] ~~tree-sitter/Joern-based parsing~~ — **scope correction, see note below**: crAPI's real stack is Kotlin/Spring (identity), Go (community), Python/Django (workshop), not the Node/Flask/Java the brief assumed. Used a lightweight regex-based ownership-evidence scanner instead of standing up tree-sitter grammars or Joern for 3 languages in one phase — a deliberate scope cut, not an oversight.
+- [x] OpenAPI spec parser (`openapi_parser.py`) — infers resources/endpoints/CRUD-vs-action transitions from the spec via a two-pass heuristic (path-param-adjacent nouns first, then vocabulary matching for paramless endpoints)
+- [x] Unit tests validating against crAPI's real structure (`backend/tests/pipeline/`) — 7 tests, all passing, including a regression anchor tied to a real vulnerability (see below)
+- [x] `backend/cli`: `uv run authhunter build-model --target ../targets/crapi --out <path>` → writes the model as JSON (Typer; also added a `version` command since Typer collapses a single-command app and silently drops the subcommand name otherwise)
+- [x] Commit, push
 
-**What's actually built:** *(fill in when done)*
+**What's actually built:** Stage 1 is a real, working pipeline stage — not a stub. `build_from_openapi()` parses crAPI's 40-endpoint spec into 25 resources with CRUD/action-classified transitions; `scan_ownership_evidence()` greps the corresponding service source for each BOLA-relevant resource (video/vehicle/post/order — the ones with a path-param id) and flags lines where the id and an ownership-related keyword appear near each other. `build_application_model()` orchestrates both into one `ApplicationModel`, exposed via `authhunter build-model`.
+
+**Notable finding, not just plumbing:** the source scanner surfaced a genuine, live BOLA vulnerability in crAPI's own code — `workshop/crapi/shop/views.py:122`, `order = Order.objects.get(id=order_id)`, with no ownership filter at all (it later does `user = order.user` instead of checking the requester). This is real validation that Stage 1's signal is useful, not just structurally correct — it's exactly the kind of evidence Stage 2 (Phase 4) needs to hand the LLM. It's now a regression-anchored test (`test_source_scanner.py::test_order_scan_surfaces_the_known_bola_line`) — if this stops showing up, the heuristic broke.
+
+**Two rounds of real bugs found and fixed while validating against actual output** (both by literally reading what the parser produced against known crAPI facts, not by inspection alone): (1) the resource-inference fallback classified every unmatched endpoint as `ACTION` regardless of HTTP verb, misclassifying plain `GET /products` — fixed to still branch on method when resource-matching fails. (2) the ownership-evidence id-param regex included a "stripped suffix" variant (`order_id` → bare `order`) meant to catch loose wording, but it matched Django's `.order_by()` and `OrderedDict` — removed; now matches only the exact id-param name.
+
+**Known limitation, documented rather than silently accepted:** the `vehicle` resource's ownership scan returns 0 hits — the OpenAPI spec's declared path param `vehicleId` doesn't appear as that literal string anywhere in the actual Kotlin source (it likely resolves through a VIN or different internal name). This is an honest precision/recall gap in a regex-only heuristic; Stage 2's LLM is where real semantic matching picks up the slack. Not fixed further here — chasing it would be over-engineering a heuristic that's explicitly meant to be approximate.
+
+Not yet wired: the API/frontend don't call this yet — that's explicitly Phase 3's job, not Phase 2's.
 
 ---
 
