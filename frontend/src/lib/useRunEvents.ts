@@ -4,8 +4,14 @@ import { runEventsUrl, type RunStatus } from "@/lib/apiClient";
 export interface RunEvent {
   type: string;
   status?: RunStatus;
+  stage?: string;
   error?: string | null;
-  summary?: { resources: number; endpoints: number; transitions: number };
+  summary?: {
+    resources: number;
+    endpoints: number;
+    transitions: number;
+    invariants: number;
+  };
 }
 
 export function useRunEvents(runId: number | undefined) {

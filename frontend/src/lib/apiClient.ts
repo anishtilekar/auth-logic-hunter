@@ -62,8 +62,18 @@ export interface ApplicationModel {
   transitions: StateTransition[];
 }
 
+export interface SecurityInvariant {
+  resource: string;
+  endpoint_keys: string[];
+  kind: "ownership" | "role_required" | "state_precondition";
+  statement: string;
+  rationale: string;
+  confidence: number;
+}
+
 export interface RunDetail extends RunSummary {
   application_model: ApplicationModel | null;
+  invariants: SecurityInvariant[];
 }
 
 export const listRuns = () => apiGet<RunSummary[]>("/runs");

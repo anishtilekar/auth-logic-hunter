@@ -36,6 +36,7 @@ export default function RunDetail() {
   });
 
   const events = useRunEvents(runId);
+  const currentStage = [...events].reverse().find((e) => e.type === "stage")?.stage;
 
   useEffect(() => {
     const last = events.at(-1);
@@ -56,7 +57,14 @@ export default function RunDetail() {
           <CardTitle>
             Run #{run.id} — {run.target_name}
           </CardTitle>
-          <Badge variant={STATUS_VARIANT[run.status]}>{run.status}</Badge>
+          <div className="flex items-center gap-2">
+            {run.status === "running" && currentStage && (
+              <span className="text-muted-foreground text-xs">
+                {currentStage === "invariants" ? "extracting invariants…" : currentStage}
+              </span>
+            )}
+            <Badge variant={STATUS_VARIANT[run.status]}>{run.status}</Badge>
+          </div>
         </CardHeader>
         {run.error && (
           <CardContent>
@@ -75,8 +83,32 @@ export default function RunDetail() {
               <span>{Object.keys(model.resources).length} resources</span>
               <span>{model.endpoints.length} endpoints</span>
               <span>{model.transitions.length} transitions</span>
+              <span>{run.invariants.length} invariants</span>
             </CardContent>
           </Card>
+
+          {run.invariants.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Invariants</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {run.invariants.map((inv) => (
+                  <div key={`${inv.resource}-${inv.statement}`} className="rounded-md border p-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{inv.resource}</span>
+                      <Badge variant="outline">{inv.kind}</Badge>
+                      <span className="text-muted-foreground ml-auto text-xs">
+                        {Math.round(inv.confidence * 100)}% confidence
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm">{inv.statement}</p>
+                    <p className="text-muted-foreground mt-1 text-xs">{inv.rationale}</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>

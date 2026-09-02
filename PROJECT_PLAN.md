@@ -6,9 +6,10 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 
 ## STATUS
 
-**Current phase:** Phase 4 — Invariant Extractor (Stage 2)
+**Current phase:** Phase 5 — Hypothesis Generator, Sequential Only (Stage 3)
 **Last updated:** 2026-09-02
 **Repo:** [anishtilekar/auth-logic-hunter](https://github.com/anishtilekar/auth-logic-hunter) (private)
+**Open item carried from Phase 4:** no live Claude API call has been made yet (no key available in this environment) — the prompt/schema are wired and unit-tested, but not yet validated against a real model response. Do this before trusting Stage 2's output.
 
 | Phase | Name | Status |
 |---|---|---|
@@ -16,6 +17,7 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 | 1 | Target app standup (crAPI) | ✅ Done |
 | 2 | State-Model Builder (Stage 1) | ✅ Done |
 | 3 | Backend + frontend skeleton (full-stack vertical slice) | ✅ Done |
+| 4 | Invariant Extractor (Stage 2) | ✅ Done (LLM output unverified — see open item above) |
 | 4 | Invariant Extractor (Stage 2) | ⬜ Not started |
 | 5 | Hypothesis Generator — sequential (Stage 3) | ⬜ Not started |
 | 6 | Symbolic Encoder + Z3 Solver (Stages 4–5) | ⬜ Not started |
@@ -231,15 +233,19 @@ Also added ruff config fixes for two more idiomatic-but-flagged patterns (`fasta
 **Owner:** Anish.
 
 Tasks:
-- [ ] Anthropic SDK integration, `ANTHROPIC_API_KEY` via `.env`
-- [ ] Pydantic `SecurityInvariant` schema (e.g. `∀ order, user: payOrder(user, order) requires user == order.owner`, structured not string)
-- [ ] Prompt design using `strict: true` tool schema so output always validates
-- [ ] Unit tests with mocked LLM responses (don't spend money in CI); one manual live integration run against crAPI
-- [ ] Decide Open Question #4 (Sonnet 5 alone vs. Opus 5 for this stage specifically) and record the decision here
-- [ ] Wire into API + frontend: Run Detail shows extracted invariants
-- [ ] Commit, push
+- [x] Anthropic SDK integration (`anthropic` 1.3.0, httpx2-based) — `ANTHROPIC_API_KEY` via `.env` through `Settings`, same pattern as `DATABASE_URL`
+- [x] Pydantic `SecurityInvariant` schema — `resource`, `endpoint_keys`, `kind` (ownership/role_required/state_precondition), `statement`, `rationale`, `confidence`. Structured fields are strict; `statement`/`rationale` stay prose since Phase 6 hasn't defined the SMT-ready predicate form yet — scoped deliberately, not a shortcut.
+- [x] **Design deviation from the task wording, same spirit:** used `client.messages.parse(..., output_format=InvariantExtractionResult)` (JSON-schema-constrained structured output, returns an already-validated Pydantic instance) instead of a forced `strict: true` tool call. For pure extraction with no agentic tool loop, this is the more direct, less-boilerplate surface — same guarantee (output always validates), less code to get wrong.
+- [x] Unit tests with a mocked client (`tests/pipeline/test_invariant_extractor.py`) — prompt-building and extraction-parsing both covered, no API spend in CI
+- [x] **Open Question #4 decided:** Opus 5 for Stage 2 specifically (`settings.invariant_model`), Sonnet 5 stays the default elsewhere — invariant extraction is the highest-stakes reasoning step and runs only a handful of times per app, so the cost delta is negligible
+- [x] Wired into API + frontend: `_execute_run` runs Stage 2 after Stage 1, persists `Invariant` rows, publishes a `{"type": "stage", "stage": "invariants"}` WS event while it runs; `GET /runs/{id}` returns them; Run Detail renders an Invariants card (resource, kind badge, confidence %, statement, rationale) plus a live "extracting invariants…" indicator
+- [x] Commit, push
 
-**What's actually built:** *(fill in when done)*
+**What's actually built:** The prompt (`prompt.py`) deliberately only includes resources with a path-param id — the actual BOLA-relevant ones — keeping token spend down and focus tight on this project's actual novelty claim, rather than dumping the full 25-resource model at the model. System prompt explicitly instructs: infer the invariant that *should* hold even when evidence shows no enforcement, but reflect that gap as *lower confidence* rather than skipping the resource — the missing-enforcement case is exactly what this whole project exists to surface, not a reason to stay silent.
+
+**Verified two different things, honestly kept separate:** (1) the pipeline logic itself, via mocked unit tests (2 pass) — no real API key needed, no cost; (2) the DB/API/frontend *wiring* for invariants, verified live in a browser by manually inserting a test `Invariant` row and confirming `GET /runs/{id}` → SQLAlchemy `selectinload` → Pydantic response → React rendering all round-trip correctly end to end. **Not yet done:** an actual live call to Claude — no `ANTHROPIC_API_KEY` is available in this environment, so the "does the LLM produce good invariants on real crAPI data" question is still open. That's a real gap, not a formality — the prompt could be well-formed and still produce mediocre invariants; someone with a real key needs to run `POST /runs` end-to-end and eyeball the output before trusting this stage.
+
+Caught and fixed one real correctness issue via mypy, not just style: `response.parsed_output` is typed `T | None` by the SDK (e.g. on a refusal) — the first draft assumed it was always present. Now raises a clear error with the `stop_reason` and refusal explanation if the model didn't produce structured output, instead of a bare `AttributeError`.
 
 ---
 
