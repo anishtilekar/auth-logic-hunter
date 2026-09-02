@@ -1,6 +1,6 @@
+import json
 from unittest.mock import MagicMock
 
-from app.core.config import settings
 from app.pipeline.stage1_state_model.schema import (
     ApplicationModel,
     Endpoint,
@@ -11,11 +11,7 @@ from app.pipeline.stage1_state_model.schema import (
 )
 from app.pipeline.stage2_invariants.extractor import extract_invariants
 from app.pipeline.stage2_invariants.prompt import build_user_prompt
-from app.pipeline.stage2_invariants.schema import (
-    InvariantExtractionResult,
-    InvariantKind,
-    SecurityInvariant,
-)
+from app.pipeline.stage2_invariants.schema import InvariantKind, SecurityInvariant
 
 
 def _sample_model() -> ApplicationModel:
@@ -42,6 +38,16 @@ def _sample_model() -> ApplicationModel:
     )
 
 
+def _mock_tool_call_client(tool_arguments: dict) -> MagicMock:
+    mock_tool_call = MagicMock()
+    mock_tool_call.function.arguments = json.dumps(tool_arguments)
+    mock_response = MagicMock()
+    mock_response.choices[0].message.tool_calls = [mock_tool_call]
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+    return mock_client
+
+
 def test_build_user_prompt_includes_only_id_param_resources() -> None:
     prompt = build_user_prompt(_sample_model())
     assert "order" in prompt
@@ -50,7 +56,7 @@ def test_build_user_prompt_includes_only_id_param_resources() -> None:
     assert "signup" not in prompt  # no id_params — not a BOLA-relevant resource
 
 
-def test_extract_invariants_uses_configured_model_and_parses_result() -> None:
+def test_extract_invariants_parses_tool_call_result() -> None:
     expected = SecurityInvariant(
         resource="order",
         endpoint_keys=["GET /orders/{order_id}"],
@@ -59,14 +65,13 @@ def test_extract_invariants_uses_configured_model_and_parses_result() -> None:
         rationale="No ownership filter found in the lookup.",
         confidence=0.4,
     )
-    mock_response = MagicMock()
-    mock_response.parsed_output = InvariantExtractionResult(invariants=[expected])
-    mock_client = MagicMock()
-    mock_client.messages.parse.return_value = mock_response
+    mock_client = _mock_tool_call_client({"invariants": [expected.model_dump(mode="json")]})
 
     result = extract_invariants(_sample_model(), client=mock_client)
 
     assert result == [expected]
-    call_kwargs = mock_client.messages.parse.call_args.kwargs
-    assert call_kwargs["model"] == settings.invariant_model
-    assert call_kwargs["output_format"] is InvariantExtractionResult
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "record_invariants"},
+    }

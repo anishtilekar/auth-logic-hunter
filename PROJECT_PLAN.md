@@ -9,7 +9,7 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 **Current phase:** Phase 6 — Symbolic Encoder + Z3 Solver (Stages 4–5)
 **Last updated:** 2026-09-02
 **Repo:** [anishtilekar/auth-logic-hunter](https://github.com/anishtilekar/auth-logic-hunter) (private)
-**Open item carried from Phases 4 & 5:** no live Claude API call has been made yet (no key available in this environment) — Stage 2 (invariants) and Stage 3 (hypotheses) are both wired and unit-tested with mocks, but neither has been validated against a real model response. Do this before trusting either stage's output — ideally before or during Phase 6, since the solver needs real hypotheses to be worth encoding.
+**Open item carried from Phases 4 & 5, now updated by the provider switch below:** no live hosted-model call has ever been made — Stage 2 (invariants) and Stage 3 (hypotheses) are wired and unit-tested with mocks (plus one real-but-small local-model check, see the LLM provider switch note after Phase 5), but neither has been validated against OpenRouter's free GLM 5.2 or Together.ai's DeepSeek V4 Pro, the two providers this project now actually uses. Needs an `OPENROUTER_API_KEY` (free tier) at minimum before trusting either stage's real output — ideally before or during Phase 6, since the solver needs real hypotheses to be worth encoding.
 
 | Phase | Name | Status |
 |---|---|---|
@@ -56,7 +56,7 @@ Chosen for what's current and well-supported as of now. Pin exact versions when 
 | Package manager (Python) | `uv` | Fast, single lockfile, replaces pip+venv+poetry |
 | Backend API framework | FastAPI (async) | Native async, WebSocket support for live run progress, pairs with httpx/asyncio already in the stack |
 | ORM / DB | SQLAlchemy 2.0 (async) + Alembic migrations, PostgreSQL | Already specified in the brief; stores runs, findings, invariants, hypotheses |
-| LLM provider | Claude Sonnet 5 (`claude-sonnet-5`) via Anthropic SDK | Confirmed decision — see memory. Use `strict: true` structured tool output for invariants/hypotheses so they're reliably machine-parseable, not prompted-JSON. Consider Opus 5 specifically for Stage 2 (Invariant Extraction) — proposed, not finalized. |
+| LLM provider | **Superseded 2026-09-02** — see "LLM provider switch" note right after Phase 5 below. Was Claude Sonnet 5 (Opus 5 for Stage 2) via Anthropic SDK; now Together.ai's DeepSeek V4 Pro (prod) / OpenRouter's free GLM 5.2 (dev), both via a shared OpenAI-compatible client using forced tool-calling for structured output. |
 | Static/code analysis | tree-sitter, Joern | Per brief — parsing crAPI's JS/Python/Java services |
 | Symbolic encoding | Custom Python → SMT-LIB | Own code, not a library — this is the core novel contribution |
 | Solver | `z3-solver` (Python bindings) | CPU-only, fast |
@@ -126,7 +126,7 @@ PROJECT_PLAN.md    # this file
 1. **GitHub repo not yet created.** Need: repo name, visibility (public/private — a private repo is probably right until submission), and which account/org owns it. Resolve at the start of Phase 0.
 2. **Scope vs. hours tension:** the original brief scoped the dashboard as "secondary/demo-only, don't over-invest." This plan now includes a full production-quality frontend per your instruction, which is real additional hours on top of the ~450-hour budget the brief assumed (that figure was also computed for a 3-person team before Sakshi's role was confirmed). Recommend tracking actual hours spent from Phase 0 onward and revisiting scope (e.g. trimming the Juice Shop evaluation, or the CI/CD GitHub Action packaging in Phase 10) if the frontend is eating more than expected.
 3. **crAPI has no built-in race conditions.** Phase 7 depends on a seeded target (custom Spring Boot service or a modified crAPI) that doesn't exist yet — needs to be built, not just configured.
-4. **Sonnet 5 vs. hybrid Opus 5/Sonnet 5 split** for Stage 2 vs. Stage 3 — proposed but not finalized. Decide by Phase 4.
+4. ~~Sonnet 5 vs. hybrid Opus 5/Sonnet 5 split for Stage 2 vs. Stage 3~~ — decided in Phase 4 (Opus 5 for Stage 2), then **fully superseded 2026-09-02**: both stages now use one model per environment (DeepSeek V4 Pro prod / GLM 5.2 free dev) instead of a per-stage Anthropic split. See the "LLM provider switch" note after Phase 5.
 5. **Strix comparison row** was discussed as worth adding to the synopsis's comparison table but hasn't been added yet — separate from this build plan, but don't forget it.
 
 ---
@@ -266,6 +266,23 @@ Tasks:
 **What's actually built:** Same verification split as Phase 4, kept honest: mocked unit tests for the generation logic (prompt filtering, schema shape) — no API spend, no key needed; DB/API/frontend wiring verified live in a browser via manually-inserted test rows. **Still not done:** an actual live Claude call — same open item as Phase 4, still no `ANTHROPIC_API_KEY` in this environment. Both Stage 2 and Stage 3's real output quality are unverified until someone runs it with a real key.
 
 **One real design bug caught while eyeballing the live-rendered output, not by any automated check:** `RequestStep` originally had both a `method: HTTPMethod` field *and* an `endpoint_key` string already formatted as `"METHOD /path"` — two sources of truth for the same fact, and the UI ended up printing `POST POST /workshop/api/shop/orders`. Worse than a display bug: an LLM-generated step could have set `method` inconsistently with the method embedded in `endpoint_key`, and nothing would have caught it. Removed the redundant field entirely rather than just fixing the display — `endpoint_key` alone is now the single source of truth, matching the convention Stage 1 already uses for its own `Endpoint.key`.
+
+---
+
+### LLM provider switch (2026-09-02, post-Phase-5)
+
+**Decision:** dropped Anthropic (Sonnet 5 / Opus 5) entirely. Both Stage 2 and Stage 3 now go through one shared OpenAI-compatible client (`app/pipeline/llm_client.py`), picking a provider by `LLM_ENV`:
+
+- **`dev` (default):** OpenRouter's free-tier GLM 5.2 (`z-ai/glm-5.2:free`) — genuinely $0, for iteration. Defaulting to this (not prod) means nobody burns real money just by running the app.
+- **`prod`:** Together.ai's DeepSeek V4 Pro (`deepseek-ai/DeepSeek-V4-Pro-0813`, $1.32/1M in, $3.96/1M out) — the real model for actual runs and the Phase 11 evaluation numbers.
+
+**Why the switch:** DeepSeek V4 Pro is ~2.5–3x cheaper than the Sonnet+Opus hybrid for the same work, with a track record (via its V3/R1 lineage) specifically strong on coding/structured-reasoning tasks — a good match for what Stages 2–3 actually do. The free GLM 5.2 dev tier eliminates dev-iteration cost entirely without touching output quality for the parts that were already cost-free anyway (mocked tests).
+
+**Why tool-calling, not each provider's native structured-output helper:** both providers are confirmed (via their docs) to support forced function/tool calling; only GLM 5.2 was confirmed for the stricter JSON-schema `response_format` mode, not DeepSeek V4 Pro. Tool-calling is the one mechanism verified on both, so `llm_client.py` builds on that rather than branching logic per provider.
+
+**Real empirical finding, not just reasoning from docs:** tried to verify the new `call_structured()` abstraction live against local Ollama models (already installed on this machine) before asking for real provider keys. Results were genuinely informative: `llama3:latest` doesn't support tools at all in Ollama; `mistral:latest` crashed the underlying llama-server process outright; `qwen2.5:3b` correctly returned a tool call for a trivial 2-field schema with `tool_choice="auto"`, but silently returned no tool call at all for the real `InvariantExtractionResult` schema (nested list of a 6-field object) — and forced `tool_choice` (the mode this project actually uses) didn't work with this Ollama version regardless of schema complexity. This is real evidence, not just the general reasoning given earlier in the project, for why small local models were ruled out as anything beyond a highly limited dev aid, and why hosted providers are the right call for both the free dev tier and production.
+
+**Honest gap, same pattern as Phases 4–5:** the `call_structured()` logic itself is verified — mocked tests pass, and the JSON-parsing/Pydantic-validation half was confirmed against a real (if small) live model and a real project schema. What's **not yet verified** is either hosted provider actually working end-to-end — no OpenRouter or Together.ai API key is available in this environment. First real run on either provider still needs to happen before trusting this switch completely.
 
 ---
 

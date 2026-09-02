@@ -1,6 +1,6 @@
-import anthropic
+from openai import OpenAI
 
-from app.core.config import settings
+from app.pipeline.llm_client import call_structured
 from app.pipeline.stage1_state_model.schema import ApplicationModel
 from app.pipeline.stage2_invariants.schema import SecurityInvariant
 from app.pipeline.stage3_hypotheses.prompt import SYSTEM_PROMPT, build_user_prompt
@@ -10,25 +10,15 @@ from app.pipeline.stage3_hypotheses.schema import Hypothesis, HypothesisGenerati
 def generate_hypotheses(
     model: ApplicationModel,
     invariants: list[SecurityInvariant],
-    client: anthropic.Anthropic | None = None,
+    client: OpenAI | None = None,
 ) -> list[Hypothesis]:
-    """Stage 3: propose candidate sequential attack chains targeting the given
-    invariants. Same output_format pattern as Stage 2 — structured, validated,
-    no forced tool call needed for pure extraction."""
-    client = client or anthropic.Anthropic(api_key=settings.anthropic_api_key or None)
-
-    response = client.messages.parse(
-        model=settings.hypothesis_model,
-        max_tokens=8000,
-        thinking={"type": "adaptive"},
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": build_user_prompt(model, invariants)}],
-        output_format=HypothesisGenerationResult,
+    """Stage 3: propose candidate sequential attack chains targeting the given invariants."""
+    result = call_structured(
+        SYSTEM_PROMPT,
+        build_user_prompt(model, invariants),
+        HypothesisGenerationResult,
+        tool_name="record_hypotheses",
+        tool_description="Record the candidate attack-chain hypotheses.",
+        client=client,
     )
-    if response.parsed_output is None:
-        reason = response.stop_reason
-        detail = f" ({response.stop_details.explanation})" if response.stop_details else ""
-        raise RuntimeError(
-            f"Hypothesis generation produced no output (stop_reason={reason}){detail}"
-        )
-    return response.parsed_output.hypotheses
+    return result.hypotheses

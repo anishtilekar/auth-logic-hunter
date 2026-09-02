@@ -1,6 +1,6 @@
+import json
 from unittest.mock import MagicMock
 
-from app.core.config import settings
 from app.pipeline.stage1_state_model.schema import (
     ApplicationModel,
     Endpoint,
@@ -10,11 +10,17 @@ from app.pipeline.stage1_state_model.schema import (
 from app.pipeline.stage2_invariants.schema import InvariantKind, SecurityInvariant
 from app.pipeline.stage3_hypotheses.generator import generate_hypotheses
 from app.pipeline.stage3_hypotheses.prompt import build_user_prompt
-from app.pipeline.stage3_hypotheses.schema import (
-    Hypothesis,
-    HypothesisGenerationResult,
-    RequestStep,
-)
+from app.pipeline.stage3_hypotheses.schema import Hypothesis, RequestStep
+
+
+def _mock_tool_call_client(tool_arguments: dict) -> MagicMock:
+    mock_tool_call = MagicMock()
+    mock_tool_call.function.arguments = json.dumps(tool_arguments)
+    mock_response = MagicMock()
+    mock_response.choices[0].message.tool_calls = [mock_tool_call]
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+    return mock_client
 
 
 def _sample_model() -> ApplicationModel:
@@ -92,14 +98,13 @@ def test_generate_hypotheses_uses_configured_model_and_parses_result() -> None:
         expected_violation="Attacker sees the victim's order",
         confidence=0.7,
     )
-    mock_response = MagicMock()
-    mock_response.parsed_output = HypothesisGenerationResult(hypotheses=[expected])
-    mock_client = MagicMock()
-    mock_client.messages.parse.return_value = mock_response
+    mock_client = _mock_tool_call_client({"hypotheses": [expected.model_dump(mode="json")]})
 
     result = generate_hypotheses(_sample_model(), _sample_invariants(), client=mock_client)
 
     assert result == [expected]
-    call_kwargs = mock_client.messages.parse.call_args.kwargs
-    assert call_kwargs["model"] == settings.hypothesis_model
-    assert call_kwargs["output_format"] is HypothesisGenerationResult
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "record_hypotheses"},
+    }

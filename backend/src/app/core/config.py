@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.paths import get_repo_root
@@ -7,17 +9,25 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=get_repo_root() / ".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://auth_logic_hunter:auth_logic_hunter@localhost:5433/auth_logic_hunter"
-    anthropic_api_key: str = ""
-    # Opus 5 for Stage 2 specifically — invariant extraction is the highest-stakes
-    # reasoning step (everything downstream depends on it) and runs only a handful
-    # of times per app, so the cost delta over Sonnet 5 is negligible. Sonnet 5
-    # remains the default for higher-volume stages (Stage 3+).
-    invariant_model: str = "claude-opus-5"
-    # Sonnet 5 for Stage 3 — this stage runs many calls per run (one round per
-    # invariant, plus the counterexample feedback loop once Stage 6 exists), where
-    # Opus-tier cost would add up for no real accuracy gain: Z3 is what actually
-    # filters bad hypotheses, not the LLM's own confidence.
-    hypothesis_model: str = "claude-sonnet-5"
+
+    # Which LLM environment the pipeline calls — defaults to "dev" so nobody
+    # accidentally burns real money just by running the app. Switch to "prod"
+    # deliberately (env var LLM_ENV=prod) for real evaluation runs.
+    llm_env: Literal["dev", "prod"] = "dev"
+
+    # Dev: OpenRouter's free-tier GLM 5.2 — $0 cost, for pipeline iteration.
+    # Confirmed: supports tools/tool_choice and JSON-schema structured output,
+    # 256K context. Free tier is rate-limited by OpenRouter.
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "z-ai/glm-5.2:free"
+
+    # Prod: Together.ai's DeepSeek V4 Pro — the real model for actual runs and
+    # the Phase 11 evaluation numbers. Confirmed: function-calling support.
+    # $1.32/1M input, $3.96/1M output at time of writing.
+    together_api_key: str = ""
+    together_base_url: str = "https://api.together.xyz/v1"
+    together_model: str = "deepseek-ai/DeepSeek-V4-Pro-0813"
 
 
 settings = Settings()
