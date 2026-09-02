@@ -24,3 +24,4 @@ class RunSummary(BaseModel):
 class RunDetail(RunSummary):
     application_model: dict[str, Any] | None
     invariants: list[dict[str, Any]]
+    hypotheses: list[dict[str, Any]]

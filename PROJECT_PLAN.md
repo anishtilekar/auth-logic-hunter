@@ -6,10 +6,10 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 
 ## STATUS
 
-**Current phase:** Phase 5 — Hypothesis Generator, Sequential Only (Stage 3)
+**Current phase:** Phase 6 — Symbolic Encoder + Z3 Solver (Stages 4–5)
 **Last updated:** 2026-09-02
 **Repo:** [anishtilekar/auth-logic-hunter](https://github.com/anishtilekar/auth-logic-hunter) (private)
-**Open item carried from Phase 4:** no live Claude API call has been made yet (no key available in this environment) — the prompt/schema are wired and unit-tested, but not yet validated against a real model response. Do this before trusting Stage 2's output.
+**Open item carried from Phases 4 & 5:** no live Claude API call has been made yet (no key available in this environment) — Stage 2 (invariants) and Stage 3 (hypotheses) are both wired and unit-tested with mocks, but neither has been validated against a real model response. Do this before trusting either stage's output — ideally before or during Phase 6, since the solver needs real hypotheses to be worth encoding.
 
 | Phase | Name | Status |
 |---|---|---|
@@ -18,6 +18,7 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 | 2 | State-Model Builder (Stage 1) | ✅ Done |
 | 3 | Backend + frontend skeleton (full-stack vertical slice) | ✅ Done |
 | 4 | Invariant Extractor (Stage 2) | ✅ Done (LLM output unverified — see open item above) |
+| 5 | Hypothesis Generator, Sequential Only (Stage 3) | ✅ Done (LLM output unverified — see open item above) |
 | 4 | Invariant Extractor (Stage 2) | ⬜ Not started |
 | 5 | Hypothesis Generator — sequential (Stage 3) | ⬜ Not started |
 | 6 | Symbolic Encoder + Z3 Solver (Stages 4–5) | ⬜ Not started |
@@ -256,13 +257,15 @@ Caught and fixed one real correctness issue via mypy, not just style: `response.
 **Owner:** Anish.
 
 Tasks:
-- [ ] `Hypothesis` schema: ordered request sequence, preconditions, target invariant, expected violation
-- [ ] Hand-craft one sequential hypothesis manually against crAPI, confirm it can flow through to (stubbed) Stage 4/5 — validates the mechanism before automating it
-- [ ] LLM-driven hypothesis generation: given app model + invariants, propose candidate sequential attack chains
-- [ ] Wire into API + frontend: Run Detail shows the hypothesis queue
-- [ ] Commit, push
+- [x] `Hypothesis` schema — `preconditions`, `steps: list[RequestStep]` (actor, endpoint_key, description, `captures`/`uses` for chaining a response value from one step into a later step's request), `target_invariant_statement`, `expected_violation`, `confidence`
+- [x] Hand-crafted hypothesis against a **real** crAPI bug, not a synthetic example — the exact one Phase 2's scanner found (`workshop/crapi/shop/views.py:122`, no ownership filter): victim creates an order and captures `order_id`, attacker fetches it via `GET .../orders/{order_id}` using that captured id. Two tests pin it: round-trips through JSON, and explicitly asserts the actor actually switches between the capturing step and the using step — the structural core of a BOLA chain, not just "the schema parses."
+- [x] LLM-driven hypothesis generation (`generator.py`) — same `output_format` pattern as Stage 2, Sonnet 5 per the finalized model split. Prompt only includes OWNERSHIP-kind invariants and instructs prioritizing *lower*-confidence ones (evidence suggested enforcement might already be missing, so a violating chain is more likely to actually succeed) — same "state the gap, don't skip it" philosophy as Stage 2's prompt.
+- [x] Wired into API + frontend: `_execute_run` runs Stage 3 after Stage 2, persists `Hypothesis` rows, publishes a `{"stage": "hypotheses"}` WS event; Run Detail renders a Hypotheses card showing each chain's numbered steps with actor badges
+- [x] Commit, push
 
-**What's actually built:** *(fill in when done)*
+**What's actually built:** Same verification split as Phase 4, kept honest: mocked unit tests for the generation logic (prompt filtering, schema shape) — no API spend, no key needed; DB/API/frontend wiring verified live in a browser via manually-inserted test rows. **Still not done:** an actual live Claude call — same open item as Phase 4, still no `ANTHROPIC_API_KEY` in this environment. Both Stage 2 and Stage 3's real output quality are unverified until someone runs it with a real key.
+
+**One real design bug caught while eyeballing the live-rendered output, not by any automated check:** `RequestStep` originally had both a `method: HTTPMethod` field *and* an `endpoint_key` string already formatted as `"METHOD /path"` — two sources of truth for the same fact, and the UI ended up printing `POST POST /workshop/api/shop/orders`. Worse than a display bug: an LLM-generated step could have set `method` inconsistently with the method embedded in `endpoint_key`, and nothing would have caught it. Removed the redundant field entirely rather than just fixing the display — `endpoint_key` alone is now the single source of truth, matching the convention Stage 1 already uses for its own `Endpoint.key`.
 
 ---
 

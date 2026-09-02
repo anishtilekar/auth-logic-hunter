@@ -16,10 +16,11 @@ from sqlalchemy.orm import selectinload
 from app.api.events import publish, subscribe, unsubscribe
 from app.api.schemas import RunCreate, RunDetail, RunSummary
 from app.core.paths import resolve_target
-from app.db.models import Invariant, Run, RunStatus
+from app.db.models import Hypothesis, Invariant, Run, RunStatus
 from app.db.session import async_session_factory, get_session
 from app.pipeline.stage1_state_model.builder import build_application_model
 from app.pipeline.stage2_invariants.extractor import extract_invariants
+from app.pipeline.stage3_hypotheses.generator import generate_hypotheses
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,9 @@ async def list_runs(session: AsyncSession = Depends(get_session)) -> list[Run]:
 
 @router.get("/{run_id}", response_model=RunDetail)
 async def get_run(run_id: int, session: AsyncSession = Depends(get_session)) -> RunDetail:
-    run = await session.get(Run, run_id, options=[selectinload(Run.invariants)])
+    run = await session.get(
+        Run, run_id, options=[selectinload(Run.invariants), selectinload(Run.hypotheses)]
+    )
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return RunDetail(
@@ -61,6 +64,7 @@ async def get_run(run_id: int, session: AsyncSession = Depends(get_session)) -> 
         completed_at=run.completed_at,
         application_model=run.application_model,
         invariants=[inv.data for inv in run.invariants],
+        hypotheses=[h.data for h in run.hypotheses],
     )
 
 
@@ -116,6 +120,12 @@ async def _execute_run(run_id: int) -> None:
             invariants = extract_invariants(model)
             for inv in invariants:
                 session.add(Invariant(run_id=run_id, data=inv.model_dump(mode="json")))
+            await session.commit()
+            publish(run_id, {"type": "stage", "stage": "hypotheses"})
+
+            hypotheses = generate_hypotheses(model, invariants)
+            for hyp in hypotheses:
+                session.add(Hypothesis(run_id=run_id, data=hyp.model_dump(mode="json")))
 
             run.status = RunStatus.COMPLETED
             run.completed_at = datetime.now(UTC)
@@ -130,6 +140,7 @@ async def _execute_run(run_id: int) -> None:
                         "endpoints": len(model.endpoints),
                         "transitions": len(model.transitions),
                         "invariants": len(invariants),
+                        "hypotheses": len(hypotheses),
                     },
                 },
             )

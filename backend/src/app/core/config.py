@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     # of times per app, so the cost delta over Sonnet 5 is negligible. Sonnet 5
     # remains the default for higher-volume stages (Stage 3+).
     invariant_model: str = "claude-opus-5"
+    # Sonnet 5 for Stage 3 — this stage runs many calls per run (one round per
+    # invariant, plus the counterexample feedback loop once Stage 6 exists), where
+    # Opus-tier cost would add up for no real accuracy gain: Z3 is what actually
+    # filters bad hypotheses, not the LLM's own confidence.
+    hypothesis_model: str = "claude-sonnet-5"
 
 
 settings = Settings()

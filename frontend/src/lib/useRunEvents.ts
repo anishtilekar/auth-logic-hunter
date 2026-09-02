@@ -11,6 +11,7 @@ export interface RunEvent {
     endpoints: number;
     transitions: number;
     invariants: number;
+    hypotheses: number;
   };
 }
 

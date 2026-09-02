@@ -60,7 +60,9 @@ export default function RunDetail() {
           <div className="flex items-center gap-2">
             {run.status === "running" && currentStage && (
               <span className="text-muted-foreground text-xs">
-                {currentStage === "invariants" ? "extracting invariants…" : currentStage}
+                {currentStage === "invariants" && "extracting invariants…"}
+                {currentStage === "hypotheses" && "generating attack hypotheses…"}
+                {currentStage !== "invariants" && currentStage !== "hypotheses" && currentStage}
               </span>
             )}
             <Badge variant={STATUS_VARIANT[run.status]}>{run.status}</Badge>
@@ -84,8 +86,47 @@ export default function RunDetail() {
               <span>{model.endpoints.length} endpoints</span>
               <span>{model.transitions.length} transitions</span>
               <span>{run.invariants.length} invariants</span>
+              <span>{run.hypotheses.length} hypotheses</span>
             </CardContent>
           </Card>
+
+          {run.hypotheses.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Hypotheses</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {run.hypotheses.map((hyp) => (
+                  <div
+                    key={`${hyp.resource}-${hyp.target_invariant_statement}`}
+                    className="rounded-md border p-3"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{hyp.resource}</span>
+                      <span className="text-muted-foreground ml-auto text-xs">
+                        {Math.round(hyp.confidence * 100)}% confidence
+                      </span>
+                    </div>
+                    <p className="text-muted-foreground mt-1 text-xs italic">
+                      targets: {hyp.target_invariant_statement}
+                    </p>
+                    <div className="mt-2 space-y-1">
+                      {hyp.steps.map((step) => (
+                        <div key={step.step} className="flex items-start gap-2 text-xs">
+                          <Badge variant="outline" className="shrink-0">
+                            {step.step}. {step.actor}
+                          </Badge>
+                          <span className="font-mono">{step.endpoint_key}</span>
+                          <span className="text-muted-foreground">{step.description}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-sm">{hyp.expected_violation}</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           {run.invariants.length > 0 && (
             <Card>

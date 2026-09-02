@@ -71,9 +71,28 @@ export interface SecurityInvariant {
   confidence: number;
 }
 
+export interface RequestStep {
+  step: number;
+  actor: string;
+  endpoint_key: string;
+  description: string;
+  captures: string | null;
+  uses: Record<string, string>;
+}
+
+export interface Hypothesis {
+  resource: string;
+  target_invariant_statement: string;
+  preconditions: string[];
+  steps: RequestStep[];
+  expected_violation: string;
+  confidence: number;
+}
+
 export interface RunDetail extends RunSummary {
   application_model: ApplicationModel | null;
   invariants: SecurityInvariant[];
+  hypotheses: Hypothesis[];
 }
 
 export const listRuns = () => apiGet<RunSummary[]>("/runs");
