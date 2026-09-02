@@ -10,8 +10,8 @@ CRAPI_SPEC = Path(__file__).parents[3] / "targets/crapi/openapi-spec/crapi-opena
 
 @pytest.fixture(scope="module")
 def model() -> ApplicationModel:
-    if not CRAPI_SPEC.exists():
-        pytest.skip("crAPI submodule not checked out")
+    if not CRAPI_SPEC.is_file():
+        pytest.skip("crAPI submodule not checked out (empty dir counts as missing)")
     return build_from_openapi(CRAPI_SPEC)
 
 
