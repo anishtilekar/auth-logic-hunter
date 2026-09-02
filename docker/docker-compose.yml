@@ -1,3 +1,5 @@
+name: auth-logic-hunter
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -6,7 +8,12 @@ services:
       POSTGRES_PASSWORD: auth_logic_hunter
       POSTGRES_DB: auth_logic_hunter
     ports:
-      - "5432:5432"
+      # Host-side 5433, not 5432 — avoids colliding with a native/pre-existing
+      # Postgres install on the host (bit us in dev: Windows had one running
+      # as a service on 5432, and localhost:5432 silently connected to that
+      # instead of this container). Container-internal traffic (the `backend`
+      # service's DATABASE_URL below) still uses 5432 — unaffected.
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

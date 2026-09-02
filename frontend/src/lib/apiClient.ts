@@ -5,3 +5,68 @@ export async function apiGet<T>(path: string): Promise<T> {
   if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`);
   return res.json() as Promise<T>;
 }
+
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`POST ${path} failed: ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+export function runEventsUrl(runId: number): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}${BASE_URL}/runs/${runId}/events`;
+}
+
+export type RunStatus = "pending" | "running" | "completed" | "failed";
+
+export interface RunSummary {
+  id: number;
+  target_name: string;
+  status: RunStatus;
+  error: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface Endpoint {
+  path: string;
+  method: string;
+  operation_id: string | null;
+  summary: string | null;
+  path_params: string[];
+  resource: string | null;
+}
+
+export interface StateTransition {
+  resource: string;
+  kind: "create" | "read" | "update" | "delete" | "action";
+  endpoint_key: string;
+}
+
+export interface Resource {
+  name: string;
+  id_params: string[];
+  endpoint_keys: string[];
+  ownership_evidence: string[];
+}
+
+export interface ApplicationModel {
+  title: string;
+  base_url: string;
+  resources: Record<string, Resource>;
+  endpoints: Endpoint[];
+  transitions: StateTransition[];
+}
+
+export interface RunDetail extends RunSummary {
+  application_model: ApplicationModel | null;
+}
+
+export const listRuns = () => apiGet<RunSummary[]>("/runs");
+export const getRun = (id: number) => apiGet<RunDetail>(`/runs/${id}`);
+export const createRun = (target_name: string) =>
+  apiPost<RunSummary>("/runs", { target_name });

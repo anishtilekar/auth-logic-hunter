@@ -6,8 +6,8 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 
 ## STATUS
 
-**Current phase:** Phase 3 — Backend + frontend skeleton (full-stack vertical slice)
-**Last updated:** 2026-09-01
+**Current phase:** Phase 4 — Invariant Extractor (Stage 2)
+**Last updated:** 2026-09-02
 **Repo:** [anishtilekar/auth-logic-hunter](https://github.com/anishtilekar/auth-logic-hunter) (private)
 
 | Phase | Name | Status |
@@ -15,7 +15,7 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 | 0 | Project scaffolding & infra | ✅ Done |
 | 1 | Target app standup (crAPI) | ✅ Done |
 | 2 | State-Model Builder (Stage 1) | ✅ Done |
-| 3 | Backend + frontend skeleton (full-stack vertical slice) | ⬜ Not started |
+| 3 | Backend + frontend skeleton (full-stack vertical slice) | ✅ Done |
 | 4 | Invariant Extractor (Stage 2) | ⬜ Not started |
 | 5 | Hypothesis Generator — sequential (Stage 3) | ⬜ Not started |
 | 6 | Symbolic Encoder + Z3 Solver (Stages 4–5) | ⬜ Not started |
@@ -205,15 +205,22 @@ Not yet wired: the API/frontend don't call this yet — that's explicitly Phase 
 **Owner:** Sakshi (API wiring + frontend), Anish/Vijay define API contract with her.
 
 Tasks:
-- [ ] SQLAlchemy models: `Run`, `Finding`, `Invariant`, `Hypothesis` (fields for the later stages can be stubbed now)
-- [ ] Alembic migration, wire Postgres via docker-compose
-- [ ] FastAPI: `POST /runs` (kicks off a run, currently just Stage 1), `GET /runs/{id}`, `GET /runs`, WebSocket `/runs/{id}/events`
-- [ ] Frontend pages: Dashboard (list runs), New Run form, Run Detail (shows live status via WS, renders the Stage 1 model once done)
-- [ ] `lib/apiClient.ts` + WS hook in frontend
-- [ ] End-to-end manual test: start a run from the UI, watch it hit Stage 1, see the extracted model rendered
-- [ ] Commit, push
+- [x] SQLAlchemy models: `Run` (real fields), `Finding`/`Invariant`/`Hypothesis` (deliberate stubs — just `run_id` + a JSON `data` blob — their real shape lands in Phases 4/5/6)
+- [x] Alembic (async) migration, wired against Postgres via docker-compose
+- [x] FastAPI: `POST /runs`, `GET /runs`, `GET /runs/{id}`, WebSocket `/runs/{id}/events` — background execution via `BackgroundTasks` + an in-memory per-run event fan-out (single-process, no broker — revisit only if the pipeline ever needs multiple workers)
+- [x] Frontend pages: Dashboard (run list + status badges), New Run (form), Run Detail (live status via WS + polling fallback, renders the full Stage 1 model — resources with ownership evidence, transitions)
+- [x] `lib/apiClient.ts` (typed) + `useRunEvents` WS hook
+- [x] End-to-end manual test — done in a real browser (Claude Browser tooling), not just curl: New Run → Start Run → live navigation to Run Detail → completed status → full model rendered, including the real BOLA evidence line from Phase 2 (`workshop\crapi\shop\views.py:122: order = Order.objects.get(id=order_id)`) actually visible in the UI. Console clean, no errors.
+- [x] Commit, push
 
-**What's actually built:** *(fill in when done)*
+**What's actually built:** A genuine full-stack vertical slice, verified live end-to-end in a browser, not just unit-tested in isolation. `POST /runs` creates a row and schedules Stage 1 in the background; the frontend either watches it live over WebSocket or falls back to 1s polling (`refetchInterval`) — both paths were exercised and agree. The WS handler correctly handles the case where a run *already finished* by the time a client connects (sends the terminal status immediately and closes) — which is actually the common case here, since Stage 1 completes in milliseconds. Real multi-event live streaming (pending → running → completed as separate WS messages, not just an instant terminal state) will get its first genuine exercise once a slower stage exists (Phase 4's LLM calls).
+
+**Three real environment/infra bugs hit and fixed, not glossed over:**
+1. **Postgres port collision:** a native Windows PostgreSQL service was already listening on 5432, and `localhost:5432` was silently connecting to *that* instead of our Docker container — surfaced as a confusing `InvalidPasswordError` during the first Alembic run, not a connection-refused (which would've been obvious). Fixed by moving our compose stack's host-side Postgres port to 5433; container-internal traffic (backend → postgres) was never affected.
+2. **Compose project-name collision:** both our `docker/docker-compose.yml` and crAPI's vendored one live in a directory literally named `docker`, so Compose defaulted both to the same project name and started reporting crAPI's containers as "orphans" of our project — one accidental `--remove-orphans` away from deleting an unrelated stack. Fixed by giving our compose file an explicit `name: auth-logic-hunter`.
+3. **Stale Docker container shadowing native dev:** the Phase-0-era `backend` container was still running and bound to host port 8000 with an old image, silently intercepting requests meant for a freshly-started native `uv run uvicorn` process — `/health` worked (both builds have it) but `/runs` 404'd, which is what actually exposed it. Lesson recorded in this file: **stop the Docker `backend` service before native dev on the same port**, don't run both.
+
+Also added ruff config fixes for two more idiomatic-but-flagged patterns (`fastapi.Depends`, same class of false-positive as `typer.Option` from Phase 2) and excluded `migrations/versions/*` (autogenerated, not meant for hand-authored style compliance) from linting.
 
 ---
 
