@@ -45,6 +45,10 @@ class Resource(BaseModel):
     ownership_evidence: list[str] = []
     """file:line snippets from source where an ownership-style check was found
     near this resource's identifier — a heuristic hint for Stage 2, not proof."""
+    race_evidence: list[str] = []
+    """file:line snippets showing a check-then-act on a state field with no lock
+    between — what a single_use invariant looks like in source, and why it can be
+    raced. Same status as ownership_evidence: a hint for Stage 2, not proof."""
 
 
 class ApplicationModel(BaseModel):

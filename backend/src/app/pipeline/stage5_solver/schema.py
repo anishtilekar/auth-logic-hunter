@@ -2,6 +2,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel
 
+from app.pipeline.stage6_replay.schema import ReplayResult
+
 
 class Verdict(StrEnum):
     SAT = "sat"  # chain provably reaches a violating state — witness attached
@@ -35,3 +37,4 @@ class ProofResult(BaseModel):
     witness: Witness | None = None
     smtlib: str | None = None
     solve_time_ms: float = 0.0
+    replay: ReplayResult | None = None

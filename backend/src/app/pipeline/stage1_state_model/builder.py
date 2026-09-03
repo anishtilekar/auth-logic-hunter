@@ -2,7 +2,7 @@ from pathlib import Path
 
 from app.pipeline.stage1_state_model.openapi_parser import build_from_openapi
 from app.pipeline.stage1_state_model.schema import ApplicationModel
-from app.pipeline.stage1_state_model.source_scanner import scan_ownership_evidence
+from app.pipeline.stage1_state_model.source_scanner import scan_source_evidence
 
 
 def build_application_model(target_dir: Path) -> ApplicationModel:
@@ -16,6 +16,6 @@ def build_application_model(target_dir: Path) -> ApplicationModel:
 
     services_dir = target_dir / "services"
     if services_dir.is_dir():
-        scan_ownership_evidence(model, services_dir)
+        scan_source_evidence(model, services_dir)
 
     return model

@@ -21,6 +21,8 @@ Stages 2–3 call an LLM through a shared OpenAI-compatible client (`app/pipelin
 
 `app/pipeline/stage4_encoder` binds each hypothesis onto the application model (rejecting dangling `stepN.x` references, unknown endpoints, unbound path params) and encodes it as bounded-model-checking constraints over per-instance `owner`/`exists` state; `app/pipeline/stage5_solver` decides it with Z3. `sat` = the chain provably reaches a violating state (concrete witness attached, for Stage 6 replay); `unsat` = it provably cannot (unsat core + reason attached, fed back into Stage 3's next round). Every result carries the exact SMT-LIB problem. Z3 is CPU-only (`z3-solver` wheel, no native build step).
 
+Stage 6 (replay) fires each proven witness at the live target and reports `confirmed` / `refuted` / `inconclusive`, attaching per-step HTTP evidence. Opt in per run: `POST /runs {"target_name": "seeded-race", "replay": true}` (off by default — it sends real requests and needs the target running). Endpoints observed to enforce their rule feed back into later rounds as `enforced_endpoints`.
+
 Race conditions (Phase 7): a `single_use` invariant carries a `limit`; hypothesis steps sharing a `race_group` are fired concurrently, and the encoder gives each a symbolic check/write event time so Z3 searches every interleaving. The same chain is `sat` concurrent and `unsat` sequential — that gap is the race. The seeded target for this lives in `targets/seeded-race` (see `targets/README.md`).
 
 ## Checks

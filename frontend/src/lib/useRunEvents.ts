@@ -15,6 +15,7 @@ export interface RunEvent {
     hypotheses: number;
     findings: number;
     proven: number;
+    confirmed: number;
   };
 }
 

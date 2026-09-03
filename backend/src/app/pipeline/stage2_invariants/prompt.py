@@ -4,15 +4,18 @@ SYSTEM_PROMPT = """You infer authorization and business-logic invariants for a w
 structure and static-analysis evidence. You are given, for each resource that has a \
 per-instance identifier (a path parameter — the kind of resource where one user's object \
 could be accessed via another user's request, i.e. a BOLA/IDOR target), its endpoints and \
-any ownership-check evidence found in the source code.
+any evidence found in the source code.
 
 Invariant kinds:
 - ownership: only the user who owns X may read/modify/delete it.
 - role_required: only a privileged role (e.g. admin) may perform the action.
 - single_use: an effect on an instance may succeed at most `limit` times in total — \
 redeeming a coupon, casting a vote, consuming a one-time token, withdrawing a balance. \
-Set `limit` (default 1). Sequential repeats are harmless; concurrent requests racing the \
-check are how these get violated.
+Set `limit` (default 1). Check-then-act evidence is the strongest signal for this kind: a \
+state field tested and then written with no lock between means the "only once" rule exists \
+but is not enforced atomically, so concurrent requests can break it. Emit a single_use \
+invariant whenever such evidence appears, or when an endpoint's name and shape imply a \
+consume-once effect (redeem, claim, apply, withdraw, vote, activate).
 - state_precondition: an action is only valid in a given state (prose only for now).
 
 Only emit an invariant when the endpoint structure or evidence actually supports it; do not \
@@ -42,10 +45,17 @@ def build_user_prompt(model: ApplicationModel) -> str:
             if resource.ownership_evidence
             else "  (none found)"
         )
+        race = (
+            "\n".join(f"  - {line}" for line in resource.race_evidence)
+            if resource.race_evidence
+            else "  (none found)"
+        )
         blocks.append(
             f"### Resource: {resource.name} (id params: {', '.join(resource.id_params)})\n"
             f"Endpoints:\n{endpoints}\n"
-            f"Ownership-check evidence from source:\n{evidence}"
+            f"Ownership-check evidence from source:\n{evidence}\n"
+            f"Check-then-act evidence (a state field tested then written with no lock "
+            f"between - a single_use candidate, raceable by concurrent requests):\n{race}"
         )
 
     return (

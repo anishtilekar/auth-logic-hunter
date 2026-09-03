@@ -3,7 +3,14 @@ import { useEffect } from "react";
 import { useParams } from "react-router";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { getRun, type ProofResult, type RunStatus, type Verdict } from "@/lib/apiClient";
+import {
+  getRun,
+  type ProofResult,
+  type ReplayOutcome,
+  type ReplayResult,
+  type RunStatus,
+  type Verdict,
+} from "@/lib/apiClient";
 import { useRunEvents } from "@/lib/useRunEvents";
 
 const STATUS_VARIANT: Record<RunStatus, "default" | "secondary" | "destructive"> = {
@@ -29,10 +36,62 @@ const VERDICT_LABEL: Record<Verdict, string> = {
   unknown: "solver gave up",
 };
 
+const REPLAY_VARIANT: Record<ReplayOutcome, "default" | "secondary" | "destructive" | "outline"> =
+  {
+    confirmed: "destructive",
+    refuted: "secondary",
+    inconclusive: "outline",
+    error: "outline",
+  };
+
+const REPLAY_LABEL: Record<ReplayOutcome, string> = {
+  confirmed: "CONFIRMED against the live app",
+  refuted: "app enforced the rule",
+  inconclusive: "inconclusive",
+  error: "replay error",
+};
+
+function ReplayTrace({ replay }: { replay: ReplayResult }) {
+  return (
+    <div className="mt-2 space-y-1 border-t pt-2 text-xs">
+      <div className="flex items-center gap-2">
+        <Badge variant={REPLAY_VARIANT[replay.outcome]}>{REPLAY_LABEL[replay.outcome]}</Badge>
+        <span className="text-muted-foreground">{replay.base_url}</span>
+      </div>
+      <p className="text-muted-foreground">{replay.reason}</p>
+      <div className="space-y-0.5 font-mono">
+        {replay.steps.map((s) => (
+          <div key={s.step} className="flex flex-wrap items-center gap-2">
+            <span className="text-muted-foreground w-6 shrink-0">{s.step}.</span>
+            <span>{s.method}</span>
+            <span className="truncate">{s.url}</span>
+            <span
+              className={
+                s.status !== null && s.status < 400 ? "text-destructive" : "text-muted-foreground"
+              }
+            >
+              {s.error ?? s.status}
+            </span>
+            {s.race_group !== null && s.started_offset_ms !== null && (
+              <span className="text-muted-foreground">+{s.started_offset_ms.toFixed(1)}ms</span>
+            )}
+          </div>
+        ))}
+      </div>
+      {replay.enforced_endpoints.length > 0 && (
+        <p className="text-muted-foreground">
+          enforced: {replay.enforced_endpoints.join(", ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
 const STAGE_LABEL: Record<string, string> = {
   invariants: "extracting invariants…",
   hypotheses: "generating attack hypotheses…",
   solving: "proving with Z3…",
+  replaying: "replaying proven attacks against the live app…",
   refining: "refining hypotheses from counterexamples…",
 };
 
@@ -63,6 +122,7 @@ function ProofTrace({ finding }: { finding: ProofResult }) {
       {finding.unsat_core.length > 0 && (
         <p className="text-muted-foreground font-mono">core: {finding.unsat_core.join(", ")}</p>
       )}
+      {finding.replay && <ReplayTrace replay={finding.replay} />}
       {finding.smtlib && (
         <details>
           <summary className="text-muted-foreground cursor-pointer">SMT-LIB</summary>
@@ -149,6 +209,9 @@ export default function RunDetail() {
               <span>{run.invariants.length} invariants</span>
               <span>{run.hypotheses.length} hypotheses</span>
               <span>{run.findings.filter((f) => f.verdict === "sat").length} proven</span>
+              <span>
+                {run.findings.filter((f) => f.replay?.outcome === "confirmed").length} confirmed
+              </span>
             </CardContent>
           </Card>
 

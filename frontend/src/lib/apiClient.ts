@@ -108,6 +108,32 @@ export interface Witness {
   order: string[];
 }
 
+export type ReplayOutcome = "confirmed" | "refuted" | "inconclusive" | "error";
+
+export interface StepEvidence {
+  step: number;
+  actor: string;
+  method: string;
+  url: string;
+  status: number | null;
+  elapsed_ms: number;
+  request_body: Record<string, string> | null;
+  response_excerpt: string;
+  captured: Record<string, string>;
+  error: string | null;
+  race_group: number | null;
+  started_offset_ms: number | null;
+}
+
+export interface ReplayResult {
+  outcome: ReplayOutcome;
+  reason: string;
+  base_url: string;
+  steps: StepEvidence[];
+  violating_steps: number[];
+  enforced_endpoints: string[];
+}
+
 export interface ProofResult {
   hypothesis_index: number;
   invariant_statement: string | null;
@@ -117,6 +143,7 @@ export interface ProofResult {
   witness: Witness | null;
   smtlib: string | null;
   solve_time_ms: number;
+  replay: ReplayResult | null;
 }
 
 export interface RunDetail extends RunSummary {
@@ -128,5 +155,5 @@ export interface RunDetail extends RunSummary {
 
 export const listRuns = () => apiGet<RunSummary[]>("/runs");
 export const getRun = (id: number) => apiGet<RunDetail>(`/runs/${id}`);
-export const createRun = (target_name: string) =>
-  apiPost<RunSummary>("/runs", { target_name });
+export const createRun = (target_name: string, replay = false) =>
+  apiPost<RunSummary>("/runs", { target_name, replay });

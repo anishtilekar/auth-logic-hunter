@@ -6,7 +6,7 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 
 ## STATUS
 
-**Current phase:** Phase 8 — Replay / PoC Engine (Stage 6)
+**Current phase:** Phase 9 — Frontend Polish & Full Dashboard
 **Last updated:** 2026-09-03
 **Repo:** [anishtilekar/auth-logic-hunter](https://github.com/anishtilekar/auth-logic-hunter) (private)
 **Resolved 2026-09-02 — closes the gap open since Phase 4:** a real live run against crAPI with `LLM_ENV=dev` (OpenRouter's free GLM 5.2) completed in ~11 seconds with 8 invariants and 6 hypotheses, both inspected in full and genuinely high quality — see "First successful live run" after Phase 5 for the details, including a hypothesis structurally identical to the hand-crafted BOLA example from Phase 5 that the model generated independently. Stage 2 and Stage 3's real output quality is no longer a leap of faith. **Still open, lower urgency now:** Together.ai's paid `prod` tier itself hasn't been tested with a real key yet — needed before an actual Phase 11 evaluation run, not before Phase 6.
@@ -21,7 +21,7 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 | 5 | Hypothesis Generator, Sequential Only (Stage 3) | ✅ Done (LLM output verified live 2026-09-02) |
 | 6 | Symbolic Encoder + Z3 Solver (Stages 4–5) | ✅ Done (API/frontend wiring not yet seen live — see Phase 6 note) |
 | 7 | Race-condition extension | ✅ Done (seeded target's planted race reproduced live; LLM race generation not yet seen live) |
-| 8 | Replay/PoC Engine (Stage 6) | ⬜ Not started |
+| 8 | Replay/PoC Engine (Stage 6) | ✅ Done (crAPI auth automation deferred — see note) |
 | 9 | Frontend polish & full dashboard | ⬜ Not started |
 | 10 | CLI + GitHub Action wrapper | ⬜ Not started |
 | 11 | Evaluation vs. baselines | ⬜ Not started |
@@ -370,13 +370,21 @@ Tasks:
 **Owner:** Harshada (+ Vijay).
 
 Tasks:
-- [ ] `httpx` + `asyncio` replay client for sequential witnesses
-- [ ] Precisely-timed concurrent firing for race witnesses (this is the trickiest part — needs real timing control, not just `asyncio.gather`)
-- [ ] Capture request/response evidence per replay
-- [ ] Wire into API + frontend: Findings show reproduction steps + captured evidence
-- [ ] Commit, push
+- [x] `httpx` + `asyncio` replay client for sequential witnesses (`stage6_replay/replayer.py`)
+- [x] Precisely-timed concurrent firing for race witnesses — `asyncio.Barrier` over pre-warmed per-member connections, not bare `asyncio.gather`
+- [x] Capture request/response evidence per replay (status, timing, body excerpt, captured values, per-member release offsets)
+- [x] Wire into API + frontend: `POST /runs {"replay": true}` runs Stage 6 on every SAT finding; Run Detail shows the outcome badge, reproduction steps and captured evidence under each proof trace
+- [x] Commit, push
 
-**What's actually built:** *(fill in when done)*
+**What's actually built:** Replay is what turns a proof into a finding. Stage 5 says a chain *can* violate its invariant *if* the app doesn't enforce the check; Stage 6 decides whether this app actually doesn't, and reports one of four outcomes. `confirmed`: the violating step(s) succeeded against the running app, with the request/response evidence attached. `refuted`: the app rejected them, and the endpoints that did the rejecting come back as `enforced_endpoints` and feed straight into the next round's `prove_all`, so the same chain is refuted up front instead of re-proposed — the Phase 6/7 hand-off hook, now actually connected at both ends. `inconclusive`: a setup step failed, so the violating step never got a fair try (deliberately *not* reported as refuted — an attack that never ran is not evidence of enforcement). `error`: the chain didn't even bind.
+
+**Race timing is the part that needed real care.** Members of a race group each get their own client, are connection-warmed with an OPTIONS request first, and then all block on an `asyncio.Barrier` so the release is the only ordering between them. Plain `asyncio.gather` would serialize TCP setup and hide the very window being tested. Each step records its wall-clock offset from the release, so the interleaving that actually occurred is visible rather than assumed — in the live run below both redeems started within 0.2 ms of each other, against a 50 ms window.
+
+**Verified end to end against the running seeded service, both directions.** The concurrent chain: Z3 `sat` with the proven interleaving `check step 2 < check step 3 < write step 2 < write step 3`, then replay `confirmed` — both redeems returned HTTP 200 and the coupon read back `redemptionCount: 2`. The sequential control: Z3 `unsat`, and replay `refuted` with 200 then 409. Rendered in the dashboard with the proof trace and the live HTTP evidence side by side. The test suite covers the same matrix against a purpose-built threaded HTTP server (a real socket server, not a mocked transport — a mock returning instantly would make any implementation look correct) with switchable `atomic` and `enforce_ownership` behaviour, so CI proves both `confirmed` and `refuted` without needing Java.
+
+**Two real bugs the tests caught before commit, both of the "silently discards a finding" kind.** (1) When a capture failed, replay fired the next request with a literal `{order_id}` still in the URL, got a 404, and read that as enforcement — turning a real finding into "refuted". Unresolved path params are now rejected up front as inconclusive. (2) A *governed* step returning 4xx was treated as a failed setup step rather than as the app enforcing the rule; it's now judged, not dismissed. A third subtlety is encoded deliberately: surviving *sequential* repeats of a single-use action never marks the endpoint enforced, because that says nothing about atomicity under concurrency — marking it would suppress exactly the race proof the seeded target exists to demonstrate.
+
+**Honest scope note — crAPI replay auth is not automated.** The replay target registry (`stage6_replay/targets.py`) ships a header strategy, which is all the seeded-race target needs (`X-User: {actor}`), plus a slot for supplied bearer tokens. crAPI's signup + email-OTP + JWT flow is a real piece of work and is deliberately not automated here; without tokens, replay against crAPI reports its 401s honestly rather than pretending the app is vulnerable. Automating that login flow is the natural first task whenever crAPI replay numbers are actually needed (Phase 11).
 
 ---
 

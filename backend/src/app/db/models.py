@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -22,6 +22,8 @@ class Run(Base):
     target_name: Mapped[str] = mapped_column(String(100))
     status: Mapped[RunStatus] = mapped_column(Enum(RunStatus), default=RunStatus.PENDING)
     application_model: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    replay_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    base_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

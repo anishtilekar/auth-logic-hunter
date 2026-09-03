@@ -8,6 +8,11 @@ from app.db.models import RunStatus
 
 class RunCreate(BaseModel):
     target_name: str
+    replay: bool = False
+    """Fire each proven witness at the live target (Stage 6). Off by default:
+    it requires the target to actually be running and sends real requests."""
+    base_url: str | None = None
+    """Override the target's default base URL for replay."""
 
 
 class RunSummary(BaseModel):
