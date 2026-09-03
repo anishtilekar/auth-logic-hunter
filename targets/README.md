@@ -61,3 +61,19 @@ docker compose -f targets/crapi/deploy/docker/docker-compose.yml down
 ## seeded-race/ (not yet built)
 
 Custom service(s) seeded with planted race-condition bugs — Phase 7.
+
+## seeded-race (race-condition target, Phase 7)
+
+crAPI has no race conditions, so this is a purpose-built Spring Boot service (`seeded-race/services/coupon-service`, Java 17, Maven) with one deliberately planted bug: `POST /api/coupons/{code}/redeem` checks `redeemed` and then sets it as two unsynchronized steps (with a 50 ms sleep to widen the window), so two overlapping redeems of the same coupon both succeed and the coupon's `redemptionCount` reaches 2. Actor identity is the `X-User` header. Stage 1 ingests it from `seeded-race/openapi-spec/seeded-race-openapi.json` exactly like crAPI (`POST /runs {"target_name": "seeded-race"}`).
+
+```bash
+cd targets/seeded-race/services/coupon-service && mvn -q spring-boot:run
+```
+
+Listens on http://localhost:8090. Reproduce the bug by hand: create a coupon, then fire two redeems concurrently and read it back:
+
+```bash
+CODE=$(curl -s -X POST localhost:8090/api/coupons -H "X-User: victim" -H "Content-Type: application/json" -d '{}' | python -c "import sys,json;print(json.load(sys.stdin)['code'])")
+curl -s -X POST localhost:8090/api/coupons/$CODE/redeem -H "X-User: attacker" & curl -s -X POST localhost:8090/api/coupons/$CODE/redeem -H "X-User: attacker" & wait
+curl -s localhost:8090/api/coupons/$CODE -H "X-User: victim"
+```

@@ -175,6 +175,11 @@ export default function RunDetail() {
                           <Badge variant="outline" className="shrink-0">
                             {step.step}. {step.actor}
                           </Badge>
+                          {step.race_group !== null && (
+                            <Badge variant="secondary" className="shrink-0">
+                              race {step.race_group}
+                            </Badge>
+                          )}
                           <span className="font-mono">{step.endpoint_key}</span>
                           <span className="text-muted-foreground">{step.description}</span>
                         </div>

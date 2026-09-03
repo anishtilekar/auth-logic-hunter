@@ -2,8 +2,8 @@
 
 Resolves every step to a transition kind and a concrete resource instance
 *before* anything touches Z3, so that ill-formed chains (unknown endpoint,
-dangling `stepN.x` reference, unbound path param) fail with a precise
-EncodingError instead of silently encoding to something vacuous.
+dangling `stepN.x` reference, unbound path param, malformed race group) fail
+with a precise EncodingError instead of silently encoding to something vacuous.
 """
 
 import re
@@ -35,6 +35,7 @@ class BoundStep:
     resource: str | None
     target: str | None  # instance id this step acts on (from `uses`), if any
     creates: str | None  # instance id this step introduces (from `captures`), if any
+    race_group: int | None  # members of the same group are fired concurrently
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ class Binding:
     steps: list[BoundStep]
     instances: dict[str, Instance]
     actors: list[str]  # distinct, in first-appearance order
+    race_groups: dict[int, list[int]]  # group id -> member positions (consecutive)
 
 
 def _pick_target(bound: dict[str, str], path_params: list[str], id_params: list[str]) -> str | None:
@@ -54,6 +56,21 @@ def _pick_target(bound: dict[str, str], path_params: list[str], id_params: list[
         if p in bound:
             return bound[p]
     return next(iter(bound.values()), None)
+
+
+def _validate_race_groups(steps: list[BoundStep]) -> dict[int, list[int]]:
+    groups: dict[int, list[int]] = {}
+    for s in steps:
+        if s.race_group is not None:
+            groups.setdefault(s.race_group, []).append(s.position)
+    for g, positions in groups.items():
+        if len(positions) < 2:
+            raise EncodingError(f"race group {g} has a single member — a race needs at least two")
+        if positions != list(range(positions[0], positions[0] + len(positions))):
+            raise EncodingError(
+                f"race group {g} members must be consecutive steps, got positions {positions}"
+            )
+    return groups
 
 
 def bind(model: ApplicationModel, hypothesis: Hypothesis) -> Binding:
@@ -134,7 +151,9 @@ def bind(model: ApplicationModel, hypothesis: Hypothesis) -> Binding:
                 resource=resource,
                 target=target,
                 creates=creates,
+                race_group=step.race_group,
             )
         )
 
-    return Binding(steps=bound_steps, instances=instances, actors=actors)
+    race_groups = _validate_race_groups(bound_steps)
+    return Binding(steps=bound_steps, instances=instances, actors=actors, race_groups=race_groups)

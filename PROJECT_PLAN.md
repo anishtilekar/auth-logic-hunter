@@ -6,7 +6,7 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 
 ## STATUS
 
-**Current phase:** Phase 7 — Race-Condition Extension
+**Current phase:** Phase 8 — Replay / PoC Engine (Stage 6)
 **Last updated:** 2026-09-03
 **Repo:** [anishtilekar/auth-logic-hunter](https://github.com/anishtilekar/auth-logic-hunter) (private)
 **Resolved 2026-09-02 — closes the gap open since Phase 4:** a real live run against crAPI with `LLM_ENV=dev` (OpenRouter's free GLM 5.2) completed in ~11 seconds with 8 invariants and 6 hypotheses, both inspected in full and genuinely high quality — see "First successful live run" after Phase 5 for the details, including a hypothesis structurally identical to the hand-crafted BOLA example from Phase 5 that the model generated independently. Stage 2 and Stage 3's real output quality is no longer a leap of faith. **Still open, lower urgency now:** Together.ai's paid `prod` tier itself hasn't been tested with a real key yet — needed before an actual Phase 11 evaluation run, not before Phase 6.
@@ -20,7 +20,7 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 | 4 | Invariant Extractor (Stage 2) | ✅ Done (LLM output verified live 2026-09-02) |
 | 5 | Hypothesis Generator, Sequential Only (Stage 3) | ✅ Done (LLM output verified live 2026-09-02) |
 | 6 | Symbolic Encoder + Z3 Solver (Stages 4–5) | ✅ Done (API/frontend wiring not yet seen live — see Phase 6 note) |
-| 7 | Race-condition extension | ⬜ Not started |
+| 7 | Race-condition extension | ✅ Done (seeded target's planted race reproduced live; LLM race generation not yet seen live) |
 | 8 | Replay/PoC Engine (Stage 6) | ⬜ Not started |
 | 9 | Frontend polish & full dashboard | ⬜ Not started |
 | 10 | CLI + GitHub Action wrapper | ⬜ Not started |
@@ -328,7 +328,7 @@ Tasks:
 
 **Verified vs. not, kept honest:** backend pytest (51 pass), ruff, mypy strict, frontend lint + build all green. The DB/API/frontend wiring was then verified live in a browser after fixing Docker (see the Docker note below): Postgres up, migrations applied, a run seeded with **real** Stage 1 + Stage 4/5 output (`prove_all` against the actual crAPI model, verdicts `sat` and `unsat`), and Run Detail confirmed rendering the verdict badge, witness narrative, unsat core + reason, and the collapsible SMT-LIB trace with its human-readable label header. `Finding` rows carry `ProofResult` JSON paired to hypotheses by position; the `Finding` table already existed as a stub, so no migration was needed.
 
-**One thing still not exercised today:** a full `POST /runs` driving Stage 2 → 3 → 4 → 5 in one pass. Four real attempts all failed at Stage 2 with an upstream `429` from OpenRouter's shared free pool (`z-ai/glm-5.2:free is temporarily rate-limited upstream`) — not a code fault, and the error surfaced cleanly into `run.error` and the WS failure event exactly as designed. The LLM stages themselves were verified live on 2026-09-02, and the solver stages were verified here with real (non-fabricated) solver output, so the only untested seam is the handoff between them. Retry a plain `POST /runs` when the free tier recovers, or use the paid `prod` tier.
+**Full pipeline verified live (later on 2026-09-03):** after four attempts failed at Stage 2 on an upstream `429` from OpenRouter's shared free pool (surfaced cleanly into `run.error` as designed), a fifth plain `POST /runs` with `LLM_ENV=dev` completed in ~20 seconds: 5 invariants (including a correctly-identified `role_required` admin-video rule and a correctly *non*-ownership call on community posts), 5 hypotheses, 5 findings — every LLM-generated chain bound to the real crAPI model with zero `invalid`/`unsupported` verdicts, and Z3 proved all five `sat` with concrete witnesses (video read+delete, video update, vehicle location via the list-then-use shape, order read+return, order update). Rendered in the browser with per-hypothesis proof traces. Stage 2 -> 3 -> 4 -> 5 handoff is no longer an open item.
 
 ### Docker Desktop startup failure — root-caused and fixed (2026-09-03)
 
@@ -347,13 +347,19 @@ Docker Desktop 4.73 crashed on every start with "starting services: initializing
 **Owner:** Vijay + Anish jointly.
 
 Tasks:
-- [ ] Extend SMT encoding with an interleaving/ordering variable so the solver checks every interleaving of a concurrent request pair
-- [ ] Extend Hypothesis Generator to propose concurrent/race pairs
-- [ ] Build the seeded race-condition target (`/targets/seeded-race` — custom Spring Boot service(s) with a planted double-redeem/double-spend bug), since crAPI has none (Open Question #3)
-- [ ] Hand-crafted race hypothesis proven end-to-end first, then LLM-driven race hypothesis generation
-- [ ] Commit, push
+- [x] Extend SMT encoding with an interleaving/ordering variable so the solver checks every interleaving of a concurrent request pair (`race_group` on steps; per-member check/write event times in `encoder.py`)
+- [x] Extend Hypothesis Generator to propose concurrent/race pairs (new `single_use` invariant kind in Stage 2, race instructions + `race_group` in Stage 3's prompt/schema)
+- [x] Build the seeded race-condition target (`/targets/seeded-race` — Spring Boot coupon service with a planted double-redeem bug), since crAPI has none (Open Question #3 resolved)
+- [x] Hand-crafted race hypothesis proven end-to-end first (SAT against the Stage 1 model of the seeded target; sequential twin UNSAT), and the planted bug reproduced live against the running service. LLM-driven race generation is wired (prompt + schema) but not yet observed in a live run — see below.
+- [x] Commit, push
 
-**What's actually built:** *(fill in when done)*
+**What's actually built:** Race conditions are a first-class hypothesis shape now, not a special case bolted on. A hypothesis step carries an optional `race_group`; steps sharing a group are fired concurrently and must be consecutive. Stage 2 gained a `single_use` invariant kind with a machine-readable `limit` ("this effect may succeed at most N times per instance" — coupon redeem, vote, token consume, withdraw), which is the invariant class races actually violate. The encoder tracks a per-instance use counter alongside owner/exists. A *sequential* governed use is atomic check-then-act: it succeeds iff the prior count is below the limit, then increments. A *race group* of uses gets, per member, symbolic check and write event times with `check < write` and all events distinct; each member observes only the writes that landed before its own check, and succeeds iff that observation is below the limit. Z3 therefore searches every interleaving of the concurrent requests, and the violation predicate is simply "final count exceeds the limit." The SAT witness includes the interleaving Z3 chose (`Witness.order`, e.g. `check step 2 < check step 3 < write step 2 < write step 3`) — the concrete schedule Stage 6 will try to reproduce.
+
+**The gap between SAT and UNSAT *is* the race condition, and the tests pin exactly that.** The identical chain (create coupon, redeem, redeem) is SAT when the two redeems share a race group and UNSAT when they don't, with the unsat core naming the atomic-use assertions. `limit` behaves: two concurrent uses against limit 2 are UNSAT, three are SAT. A known-atomic endpoint (`enforced_endpoints`) serializes the group and refutes the race, with the core pointing at that assumption — the same hand-off hook Phase 6 gave ownership, ready for Phase 8 replay to feed back "this endpoint turned out to be atomic." Two artifact-level tests guard the encoding itself: the exported SMT-LIB re-solves to the same verdict, and adding a single serializing constraint (`write step 2 < check step 3`) to the re-parsed SAT problem makes it UNSAT — proving the window really is what the witness hinges on. Malformed races (single-member group, non-consecutive members) are `invalid` with a precise reason; ownership semantics still hold inside a race group.
+
+**Seeded target, verified two ways.** `targets/seeded-race` is a minimal Spring Boot 3.3 / Java 17 coupon service (built with the Maven already on this machine, no Docker needed) with one deliberately planted bug: `POST /api/coupons/{code}/redeem` checks `redeemed` then sets it as two unsynchronized steps, with a 50 ms sleep to widen the window. Stage 1 ingests its hand-written OpenAPI spec exactly like crAPI (create → `create`, read → `read`, redeem → `action`). (1) Formally: the hand-crafted double-redeem hypothesis proves SAT against the model Stage 1 builds from that spec, its sequential twin UNSAT. (2) Empirically, against the running jar: two *sequential* redeems return `200` then `409` and the coupon reads back `redemptionCount: 1`; two *concurrent* redeems both return `200` and it reads back `redemptionCount: 2`. That is the solver's SAT/UNSAT split reproduced by the real application — the strongest single piece of evidence so far that the formal model tracks reality.
+
+**Honest scope notes.** The `single_use` limit is modeled per instance (global), not per actor — "each user may redeem once" is a future refinement. Race semantics only affect the use counter; race-group members are treated in declared order for owner/exists. `state_precondition` is still `unsupported`. **Not yet observed live:** GLM 5.2 actually *emitting* a `single_use` invariant and a `race_group` hypothesis for the seeded target — the prompt and tool schema carry both, and unit tests pin the prompt text, but a real `POST /runs {"target_name": "seeded-race"}` hasn't been run through the LLM stages yet. Do that at the start of Phase 8; if the model doesn't produce a race chain unprompted, the hand-crafted one above is the reference case to tune the prompt against.
 
 ---
 

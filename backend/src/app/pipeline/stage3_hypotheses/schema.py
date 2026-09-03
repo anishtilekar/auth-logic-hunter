@@ -22,6 +22,11 @@ class RequestStep(BaseModel):
         description="Path/body param name -> reference to an earlier step's captured value, "
         "e.g. {'order_id': 'step1.order_id'}",
     )
+    race_group: int | None = Field(
+        default=None,
+        description="Steps sharing the same race_group integer are fired *concurrently* "
+        "(a race), not one after another. Such steps must be consecutive. None = sequential.",
+    )
 
 
 class Hypothesis(BaseModel):

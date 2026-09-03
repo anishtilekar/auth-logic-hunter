@@ -65,7 +65,8 @@ export interface ApplicationModel {
 export interface SecurityInvariant {
   resource: string;
   endpoint_keys: string[];
-  kind: "ownership" | "role_required" | "state_precondition";
+  kind: "ownership" | "role_required" | "state_precondition" | "single_use";
+  limit: number;
   statement: string;
   rationale: string;
   confidence: number;
@@ -78,6 +79,7 @@ export interface RequestStep {
   description: string;
   captures: string | null;
   uses: Record<string, string>;
+  race_group: number | null;
 }
 
 export interface Hypothesis {
@@ -103,6 +105,7 @@ export interface Witness {
   instances: InstanceWitness[];
   violating_steps: number[];
   narrative: string[];
+  order: string[];
 }
 
 export interface ProofResult {

@@ -23,6 +23,7 @@ class Witness(BaseModel):
     instances: list[InstanceWitness]
     violating_steps: list[int]
     narrative: list[str]
+    order: list[str] = []  # race witnesses: the check/write interleaving Z3 chose
 
 
 class ProofResult(BaseModel):

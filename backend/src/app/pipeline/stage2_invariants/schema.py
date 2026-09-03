@@ -7,6 +7,7 @@ class InvariantKind(StrEnum):
     OWNERSHIP = "ownership"
     ROLE_REQUIRED = "role_required"
     STATE_PRECONDITION = "state_precondition"
+    SINGLE_USE = "single_use"  # an effect may succeed at most `limit` times per instance
 
 
 class SecurityInvariant(BaseModel):
@@ -18,6 +19,12 @@ class SecurityInvariant(BaseModel):
         description='Which endpoints this invariant applies to, as "METHOD /path" strings'
     )
     kind: InvariantKind
+    limit: int = Field(
+        default=1,
+        ge=1,
+        description="single_use only: how many times the governed effect may succeed per "
+        "instance (1 = redeem/consume once). Ignored for other kinds.",
+    )
     statement: str = Field(
         description="Precise statement of the rule, e.g. 'Only the user who owns the "
         "order may view, update, or cancel it'"

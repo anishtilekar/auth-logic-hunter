@@ -119,7 +119,11 @@ def prove_all(
 
 def refutation_summary(hypothesis: Hypothesis, result: ProofResult) -> str:
     """One line per refuted chain, fed back into Stage 3's next round."""
-    chain = " -> ".join(f"{s.actor} {s.endpoint_key}" for s in hypothesis.steps)
+    parts = []
+    for s in hypothesis.steps:
+        tag = f" [race {s.race_group}]" if s.race_group is not None else ""
+        parts.append(f"{s.actor} {s.endpoint_key}{tag}")
+    chain = " -> ".join(parts)
     return f"[{result.verdict.value}] {hypothesis.resource}: {chain}. Reason: {result.reason}"
 
 
@@ -130,11 +134,12 @@ def _actor_name(enc: Encoding, m: z3.ModelRef, value: z3.ExprRef) -> str:
     return str(value)
 
 
+def _as_int(m: z3.ModelRef, expr: z3.ExprRef) -> int:
+    return int(m.eval(expr, model_completion=True).as_long())
+
+
 def _witness(enc: Encoding, m: z3.ModelRef) -> Witness:
-    actors = {
-        name: m.eval(var, model_completion=True).as_long() for name, var in enc.actors.items()
-    }
-    steps = {s.position: s for s in enc.binding.steps}
+    actors = {name: _as_int(m, var) for name, var in enc.actors.items()}
     instances = []
     owners: dict[str, str] = {}
     for r, inst in enc.binding.instances.items():
@@ -145,7 +150,23 @@ def _witness(enc: Encoding, m: z3.ModelRef) -> Witness:
                 id=r, resource=inst.resource, created_at_step=inst.created_at, owner=owner
             )
         )
+    if enc.invariant.kind == InvariantKind.SINGLE_USE:
+        violating, narrative, order = _single_use_story(enc, m)
+    else:
+        violating, narrative, order = _access_story(enc, m, owners)
+    return Witness(
+        actors=actors,
+        instances=instances,
+        violating_steps=violating,
+        narrative=narrative,
+        order=order,
+    )
 
+
+def _access_story(
+    enc: Encoding, m: z3.ModelRef, owners: dict[str, str]
+) -> tuple[list[int], list[str], list[str]]:
+    steps = {s.position: s for s in enc.binding.steps}
     violating, narrative = [], []
     for k, term in enc.violation_terms:
         if not z3.is_true(m.eval(term, model_completion=True)):
@@ -160,9 +181,40 @@ def _witness(enc: Encoding, m: z3.ModelRef) -> Witness:
             )
         else:
             narrative.append(f"step {k}: {s.actor} {s.endpoint_key} without the required role")
-    return Witness(
-        actors=actors, instances=instances, violating_steps=violating, narrative=narrative
-    )
+    return violating, narrative, []
+
+
+def _single_use_story(enc: Encoding, m: z3.ModelRef) -> tuple[list[int], list[str], list[str]]:
+    limit = enc.invariant.limit
+    n = len(enc.binding.steps)
+    violating, narrative, order = [], [], []
+    for r, counters in enc.uses.items():
+        total = _as_int(m, counters[n])
+        if total <= limit:
+            continue
+        succeeded = sorted(
+            k
+            for k, ok in enc.ok.items()
+            if enc.use_target.get(k) == r and z3.is_true(m.eval(ok, model_completion=True))
+        )
+        violating += succeeded
+        resource = enc.binding.instances[r].resource
+        narrative.append(
+            f"{resource} {r}: {total} successful uses against a limit of {limit} "
+            f"- steps {', '.join(map(str, succeeded))} all succeeded"
+        )
+    for g, positions in sorted(enc.binding.race_groups.items()):
+        events = []
+        for k in positions:
+            if k in enc.events:
+                chk, wr = enc.events[k]
+                events.append((_as_int(m, chk), f"check step {k}"))
+                events.append((_as_int(m, wr), f"write step {k}"))
+        if events:
+            names = [name for _, name in sorted(events)]
+            order += names
+            narrative.append(f"race group {g} interleaving: {' < '.join(names)}")
+    return violating, narrative, order
 
 
 def _unsat_reason(enc: Encoding, core: list[str]) -> str:
@@ -172,5 +224,9 @@ def _unsat_reason(enc: Encoding, core: list[str]) -> str:
         return "refuted by known enforcement: " + "; ".join(enforced)
     if core == ["violation"]:
         return descs["violation"]
-    relevant = [d for label, d in descs.items() if not label.startswith("frame")]
+    relevant = [
+        d
+        for label, d in descs.items()
+        if not (label.startswith("frame") or label.startswith("uframe"))
+    ]
     return "no execution of this chain violates the invariant: " + "; ".join(relevant)

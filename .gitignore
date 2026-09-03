@@ -34,3 +34,6 @@ Thumbs.db
 *.log
 
 # crAPI is a git submodule (see /targets/crapi) — tracked by reference, not ignored
+
+# Maven build output (seeded-race target service)
+target/

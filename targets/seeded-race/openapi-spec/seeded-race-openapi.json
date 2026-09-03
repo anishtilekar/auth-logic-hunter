@@ -1,0 +1,66 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Seeded Race Target",
+    "version": "0.1.0",
+    "description": "Minimal coupon service with a deliberately planted non-atomic double-redeem race. Actor identity is the X-User header."
+  },
+  "servers": [{ "url": "http://localhost:8090" }],
+  "paths": {
+    "/api/coupons": {
+      "post": {
+        "operationId": "createCoupon",
+        "summary": "Create a single-use coupon; returns its code",
+        "parameters": [{ "$ref": "#/components/parameters/XUser" }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "discountPercent": { "type": "integer" } }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Coupon created" } }
+      }
+    },
+    "/api/coupons/{code}": {
+      "get": {
+        "operationId": "getCoupon",
+        "summary": "Read a coupon, including how many times it has been redeemed",
+        "parameters": [
+          { "$ref": "#/components/parameters/XUser" },
+          { "name": "code", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Coupon" }, "404": { "description": "Unknown code" } }
+      }
+    },
+    "/api/coupons/{code}/redeem": {
+      "post": {
+        "operationId": "redeemCoupon",
+        "summary": "Redeem a coupon (must succeed at most once per coupon)",
+        "parameters": [
+          { "$ref": "#/components/parameters/XUser" },
+          { "name": "code", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Redeemed" },
+          "404": { "description": "Unknown code" },
+          "409": { "description": "Already redeemed" }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "XUser": {
+        "name": "X-User",
+        "in": "header",
+        "required": true,
+        "schema": { "type": "string" },
+        "description": "Acting user (stand-in for authentication)"
+      }
+    }
+  }
+}
