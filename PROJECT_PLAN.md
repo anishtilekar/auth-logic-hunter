@@ -6,8 +6,8 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 
 ## STATUS
 
-**Current phase:** Phase 6 — Symbolic Encoder + Z3 Solver (Stages 4–5)
-**Last updated:** 2026-09-02
+**Current phase:** Phase 7 — Race-Condition Extension
+**Last updated:** 2026-09-03
 **Repo:** [anishtilekar/auth-logic-hunter](https://github.com/anishtilekar/auth-logic-hunter) (private)
 **Resolved 2026-09-02 — closes the gap open since Phase 4:** a real live run against crAPI with `LLM_ENV=dev` (OpenRouter's free GLM 5.2) completed in ~11 seconds with 8 invariants and 6 hypotheses, both inspected in full and genuinely high quality — see "First successful live run" after Phase 5 for the details, including a hypothesis structurally identical to the hand-crafted BOLA example from Phase 5 that the model generated independently. Stage 2 and Stage 3's real output quality is no longer a leap of faith. **Still open, lower urgency now:** Together.ai's paid `prod` tier itself hasn't been tested with a real key yet — needed before an actual Phase 11 evaluation run, not before Phase 6.
 
@@ -17,11 +17,9 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 | 1 | Target app standup (crAPI) | ✅ Done |
 | 2 | State-Model Builder (Stage 1) | ✅ Done |
 | 3 | Backend + frontend skeleton (full-stack vertical slice) | ✅ Done |
-| 4 | Invariant Extractor (Stage 2) | ✅ Done (LLM output unverified — see open item above) |
-| 5 | Hypothesis Generator, Sequential Only (Stage 3) | ✅ Done (LLM output unverified — see open item above) |
-| 4 | Invariant Extractor (Stage 2) | ⬜ Not started |
-| 5 | Hypothesis Generator — sequential (Stage 3) | ⬜ Not started |
-| 6 | Symbolic Encoder + Z3 Solver (Stages 4–5) | ⬜ Not started |
+| 4 | Invariant Extractor (Stage 2) | ✅ Done (LLM output verified live 2026-09-02) |
+| 5 | Hypothesis Generator, Sequential Only (Stage 3) | ✅ Done (LLM output verified live 2026-09-02) |
+| 6 | Symbolic Encoder + Z3 Solver (Stages 4–5) | ✅ Done (API/frontend wiring not yet seen live — see Phase 6 note) |
 | 7 | Race-condition extension | ⬜ Not started |
 | 8 | Replay/PoC Engine (Stage 6) | ⬜ Not started |
 | 9 | Frontend polish & full dashboard | ⬜ Not started |
@@ -313,14 +311,22 @@ Tasks:
 **Owner:** Vijay.
 
 Tasks:
-- [ ] Python → SMT-LIB translation layer over the Application Model's state transitions
-- [ ] Z3 integration: solve, extract concrete witness on SAT, extract counterexample reason on UNSAT
-- [ ] Counterexample feedback loop: UNSAT reason feeds back into Stage 3's next hypothesis round
-- [ ] Test suite with hand-built cases of known SAT/UNSAT outcome — this is the safety net for the whole project's core claim, don't skimp here
-- [ ] Wire into API + frontend: Run Detail shows SAT/UNSAT per hypothesis with the proof trace
-- [ ] Commit, push
+- [x] Python → SMT-LIB translation layer over the Application Model's state transitions (`stage4_encoder/binding.py` + `encoder.py`)
+- [x] Z3 integration: solve, extract concrete witness on SAT, extract counterexample reason on UNSAT (`stage5_solver/solver.py`)
+- [x] Counterexample feedback loop: UNSAT reason feeds back into Stage 3's next hypothesis round (`generate_hypotheses(refuted=...)`, bounded by `settings.hypothesis_rounds`, default 2)
+- [x] Test suite with hand-built cases of known SAT/UNSAT outcome — 38 new tests across binding, solver, crAPI integration, and the feedback loop
+- [x] Wire into API + frontend: Run Detail shows SAT/UNSAT per hypothesis with the proof trace (witness narrative, unsat core, collapsible SMT-LIB)
+- [x] Commit, push
 
-**What's actually built:** *(fill in when done)*
+**What's actually built:** The formal question Z3 answers is deliberately narrow and stated in `encoder.py`'s docstring: *does there exist an execution of this exact chain, under the application model's transition semantics and assuming the app does NOT enforce the check at the governed endpoint, in which a governed step is performed in a way the invariant forbids?* It's bounded model checking over the chain: per resource instance and per step index, `owner@k : Int` (an actor id) and `exists@k : Bool`; create sets both, delete clears `exists`, read/update/action leave state alone, everything untouched is framed. SAT means the chain *structurally* reaches a violation — the model is the concrete witness (which actor, which instance, introduced at which step, violated at which step) that Stage 6 will replay. UNSAT means no execution can violate it whatever the app does — the unsat core names why (same actor created and accessed; instance deleted before access; no step touches a governed endpoint; a known-enforced endpoint). That split is what makes the loop sound: Z3 filters LLM chains that can't logically violate anything, and the replay engine — not Z3 — is what decides whether the live app actually enforces the check. An `enforced_endpoints` input exists for exactly that hand-off: once replay observes a 403 on an endpoint, marking it enforced makes every future chain through it UNSAT up front, with the core pointing at the enforcement assumption.
+
+**Structural binding happens in Python before anything touches Z3, and it's strict on purpose.** Every `uses` value must be a `stepN.name` reference to an earlier step's capture; every path param must be bound; every endpoint must exist in the model. A chain that fails binding gets verdict `invalid` with the exact error, not a vacuous encoding — the alternative (treating an unresolved id as a free symbolic instance) would make "attacker guesses an order id" trivially SAT and turn the whole check into noise. Three modeling assumptions are stated up front rather than hidden: named actors are distinct principals; a value captured from a read/list made by actor A is an instance owned by A (this is how the crAPI vehicle chain works — the create call returns no id, so the victim lists first); for `role_required`, an actor is privileged iff its name contains "admin", because the invariant text is prose. `state_precondition` invariants return `unsupported` explicitly instead of being faked.
+
+**Tests pin the *why*, not just the verdict.** Beyond SAT/UNSAT on hand-built chains (same-actor, delete-then-access, enforcement flip, ungoverned endpoint, cross-resource body reference, multi-actor attribution to the right step, list-captured ids), two tests guard the proof artifacts themselves: the exported SMT-LIB is re-parsed by Z3 and re-solved to the same verdict (so the trace is faithful, not decorative), and the SAT witness is checked by pinning its actor values into the re-parsed problem (still SAT) and then forcing the attacker to equal the owner (UNSAT) — the ownership mismatch really is what the witness hinges on. A crAPI integration test proves the hand-crafted Phase 5 order BOLA SAT against the *real* Stage 1 model, and its same-actor twin UNSAT.
+
+**Two real bugs the suite caught before commit:** (1) the witness narrative used ownership phrasing for role-required violations because it branched on "has a target instance" instead of on invariant kind; (2) `Solver.to_smt2()` output was textually non-deterministic — Z3's let-binding names are hash-cons ids recycled by the shared default context, so two identical proofs produced different traces. Fixed by translating the assertions into a fresh `z3.Context()` for export; a determinism test now pins it.
+
+**Verified vs. not, kept honest:** backend pytest (51 pass), ruff, mypy strict, frontend lint + build all green. **Not verified this session:** the DB/API/frontend wiring with a live run — Docker Desktop on this machine failed to start (a startup error in its own `dockerInference` socket handling, persisting through a factory reset), so Postgres was unavailable. The wiring follows the exact pattern of Phases 4–5 (`Finding` rows carry `ProofResult` JSON, paired to hypotheses by position, `GET /runs/{id}` returns `findings`, Run Detail renders them), and the `Finding` table already existed as a stub so no migration was needed — but "renders correctly in a browser after a real run" still needs one `POST /runs` with `LLM_ENV=dev` once Docker is back. That's the first thing to do at the start of Phase 7.
 
 ---
 

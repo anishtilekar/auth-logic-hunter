@@ -5,6 +5,7 @@ export interface RunEvent {
   type: string;
   status?: RunStatus;
   stage?: string;
+  round?: number;
   error?: string | null;
   summary?: {
     resources: number;
@@ -12,6 +13,8 @@ export interface RunEvent {
     transitions: number;
     invariants: number;
     hypotheses: number;
+    findings: number;
+    proven: number;
   };
 }
 

@@ -89,10 +89,38 @@ export interface Hypothesis {
   confidence: number;
 }
 
+export type Verdict = "sat" | "unsat" | "invalid" | "unsupported" | "unknown";
+
+export interface InstanceWitness {
+  id: string;
+  resource: string;
+  created_at_step: number;
+  owner: string;
+}
+
+export interface Witness {
+  actors: Record<string, number>;
+  instances: InstanceWitness[];
+  violating_steps: number[];
+  narrative: string[];
+}
+
+export interface ProofResult {
+  hypothesis_index: number;
+  invariant_statement: string | null;
+  verdict: Verdict;
+  reason: string | null;
+  unsat_core: string[];
+  witness: Witness | null;
+  smtlib: string | null;
+  solve_time_ms: number;
+}
+
 export interface RunDetail extends RunSummary {
   application_model: ApplicationModel | null;
   invariants: SecurityInvariant[];
   hypotheses: Hypothesis[];
+  findings: ProofResult[];
 }
 
 export const listRuns = () => apiGet<RunSummary[]>("/runs");

@@ -11,11 +11,15 @@ def generate_hypotheses(
     model: ApplicationModel,
     invariants: list[SecurityInvariant],
     client: OpenAI | None = None,
+    refuted: list[str] | None = None,
 ) -> list[Hypothesis]:
-    """Stage 3: propose candidate sequential attack chains targeting the given invariants."""
+    """Stage 3: propose candidate sequential attack chains targeting the given invariants.
+
+    `refuted`: Stage 5's refutation summaries from a previous round, if any — the
+    counterexample feedback loop."""
     result = call_structured(
         SYSTEM_PROMPT,
-        build_user_prompt(model, invariants),
+        build_user_prompt(model, invariants, refuted),
         HypothesisGenerationResult,
         tool_name="record_hypotheses",
         tool_description="Record the candidate attack-chain hypotheses.",

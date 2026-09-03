@@ -37,9 +37,7 @@ def test_get_endpoints_without_resource_match_are_read_not_action(model: Applica
     # Regression test: the fallback path used to tag every unmatched endpoint
     # ACTION regardless of verb, which misclassified plain GETs like /products.
     products_get = next(
-        t
-        for t in model.transitions
-        if t.endpoint_key == "GET /workshop/api/shop/products"
+        t for t in model.transitions if t.endpoint_key == "GET /workshop/api/shop/products"
     )
     assert products_get.kind == TransitionKind.READ
 

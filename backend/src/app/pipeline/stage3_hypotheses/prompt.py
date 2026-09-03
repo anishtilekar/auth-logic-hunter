@@ -18,7 +18,14 @@ You are proposing hypotheses to be formally checked later, not concluding anythi
 plausible chain with modest confidence is more useful here than an overconfident one."""
 
 
-def build_user_prompt(model: ApplicationModel, invariants: list[SecurityInvariant]) -> str:
+def build_user_prompt(
+    model: ApplicationModel,
+    invariants: list[SecurityInvariant],
+    refuted: list[str] | None = None,
+) -> str:
+    """`refuted` = Stage 5 refutation summaries from the previous round. Appended
+    after the static app/invariant block so that prefix stays byte-identical
+    across rounds (prompt caching)."""
     endpoints_by_resource: dict[str, list[str]] = {}
     for ep in model.endpoints:
         if ep.resource:
@@ -37,8 +44,16 @@ def build_user_prompt(model: ApplicationModel, invariants: list[SecurityInvarian
             f"Available endpoints:\n{endpoints}"
         )
 
-    return (
+    prompt = (
         f"Application: {model.title}\n\n"
         + "\n\n".join(blocks)
         + "\n\nPropose attack chains for these invariants."
     )
+    if refuted:
+        prompt += (
+            "\n\nThe following chains were formally checked and CANNOT violate their "
+            "invariant (or did not bind to the model). Do not repeat them; propose "
+            "structurally different chains that avoid each stated reason:\n"
+            + "\n".join(f"- {r}" for r in refuted)
+        )
+    return prompt

@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { useParams } from "react-router";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { getRun, type RunStatus } from "@/lib/apiClient";
+import { getRun, type ProofResult, type RunStatus, type Verdict } from "@/lib/apiClient";
 import { useRunEvents } from "@/lib/useRunEvents";
 
 const STATUS_VARIANT: Record<RunStatus, "default" | "secondary" | "destructive"> = {
@@ -12,6 +12,68 @@ const STATUS_VARIANT: Record<RunStatus, "default" | "secondary" | "destructive">
   completed: "default",
   failed: "destructive",
 };
+
+const VERDICT_VARIANT: Record<Verdict, "default" | "secondary" | "destructive" | "outline"> = {
+  sat: "default",
+  unsat: "secondary",
+  invalid: "outline",
+  unsupported: "outline",
+  unknown: "destructive",
+};
+
+const VERDICT_LABEL: Record<Verdict, string> = {
+  sat: "SAT · violation path proven",
+  unsat: "UNSAT · refuted",
+  invalid: "invalid hypothesis",
+  unsupported: "unsupported invariant kind",
+  unknown: "solver gave up",
+};
+
+const STAGE_LABEL: Record<string, string> = {
+  invariants: "extracting invariants…",
+  hypotheses: "generating attack hypotheses…",
+  solving: "proving with Z3…",
+  refining: "refining hypotheses from counterexamples…",
+};
+
+function ProofTrace({ finding }: { finding: ProofResult }) {
+  return (
+    <div className="mt-2 space-y-1 text-xs">
+      <div className="flex items-center gap-2">
+        <Badge variant={VERDICT_VARIANT[finding.verdict]}>{VERDICT_LABEL[finding.verdict]}</Badge>
+        <span className="text-muted-foreground">{finding.solve_time_ms.toFixed(1)} ms</span>
+      </div>
+      {finding.witness?.narrative.map((line) => (
+        <p key={line} className="font-mono">
+          {line}
+        </p>
+      ))}
+      {finding.witness && (
+        <p className="text-muted-foreground">
+          witness:{" "}
+          {Object.entries(finding.witness.actors)
+            .map(([name, id]) => `${name}=${id}`)
+            .join(", ")}
+          {finding.witness.instances.map(
+            (i) => `; ${i.id} (${i.resource}) owned by ${i.owner}`,
+          )}
+        </p>
+      )}
+      {finding.reason && <p className="text-muted-foreground">{finding.reason}</p>}
+      {finding.unsat_core.length > 0 && (
+        <p className="text-muted-foreground font-mono">core: {finding.unsat_core.join(", ")}</p>
+      )}
+      {finding.smtlib && (
+        <details>
+          <summary className="text-muted-foreground cursor-pointer">SMT-LIB</summary>
+          <pre className="bg-muted mt-1 max-h-64 overflow-auto rounded p-2 font-mono">
+            {finding.smtlib}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
 
 const KIND_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   create: "default",
@@ -49,6 +111,7 @@ export default function RunDetail() {
   if (!run) return <div className="p-8 text-muted-foreground">Loading…</div>;
 
   const model = run.application_model;
+  const findingByIndex = new Map(run.findings.map((f) => [f.hypothesis_index, f]));
 
   return (
     <div className="mx-auto max-w-4xl p-8 space-y-4">
@@ -60,9 +123,7 @@ export default function RunDetail() {
           <div className="flex items-center gap-2">
             {run.status === "running" && currentStage && (
               <span className="text-muted-foreground text-xs">
-                {currentStage === "invariants" && "extracting invariants…"}
-                {currentStage === "hypotheses" && "generating attack hypotheses…"}
-                {currentStage !== "invariants" && currentStage !== "hypotheses" && currentStage}
+                {STAGE_LABEL[currentStage] ?? currentStage}
               </span>
             )}
             <Badge variant={STATUS_VARIANT[run.status]}>{run.status}</Badge>
@@ -87,6 +148,7 @@ export default function RunDetail() {
               <span>{model.transitions.length} transitions</span>
               <span>{run.invariants.length} invariants</span>
               <span>{run.hypotheses.length} hypotheses</span>
+              <span>{run.findings.filter((f) => f.verdict === "sat").length} proven</span>
             </CardContent>
           </Card>
 
@@ -96,11 +158,8 @@ export default function RunDetail() {
                 <CardTitle>Hypotheses</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {run.hypotheses.map((hyp) => (
-                  <div
-                    key={`${hyp.resource}-${hyp.target_invariant_statement}`}
-                    className="rounded-md border p-3"
-                  >
+                {run.hypotheses.map((hyp, index) => (
+                  <div key={index} className="rounded-md border p-3">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{hyp.resource}</span>
                       <span className="text-muted-foreground ml-auto text-xs">
@@ -122,6 +181,9 @@ export default function RunDetail() {
                       ))}
                     </div>
                     <p className="mt-2 text-sm">{hyp.expected_violation}</p>
+                    {findingByIndex.get(index) && (
+                      <ProofTrace finding={findingByIndex.get(index)!} />
+                    )}
                   </div>
                 ))}
               </CardContent>
