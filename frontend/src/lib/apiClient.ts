@@ -1,3 +1,5 @@
+import type { Severity } from "@/lib/severity";
+
 const BASE_URL = "/api";
 
 export async function apiGet<T>(path: string): Promise<T> {
@@ -30,6 +32,8 @@ export interface RunSummary {
   error: string | null;
   created_at: string;
   completed_at: string | null;
+  /** Findings by derived severity, computed server-side on read. */
+  severity_counts: Record<string, number>;
 }
 
 export interface Endpoint {
@@ -52,6 +56,8 @@ export interface Resource {
   id_params: string[];
   endpoint_keys: string[];
   ownership_evidence: string[];
+  /** Check-then-act hits: a state field tested then written with no lock between. */
+  race_evidence: string[];
 }
 
 export interface ApplicationModel {
@@ -137,6 +143,9 @@ export interface ReplayResult {
 export interface ProofResult {
   hypothesis_index: number;
   invariant_statement: string | null;
+  invariant_kind: string | null;
+  /** Derived server-side from verdict + invariant kind + replay outcome. */
+  severity: Severity;
   verdict: Verdict;
   reason: string | null;
   unsat_core: string[];
@@ -157,3 +166,4 @@ export const listRuns = () => apiGet<RunSummary[]>("/runs");
 export const getRun = (id: number) => apiGet<RunDetail>(`/runs/${id}`);
 export const createRun = (target_name: string, replay = false) =>
   apiPost<RunSummary>("/runs", { target_name, replay });
+export const runReportUrl = (id: number) => `${BASE_URL}/runs/${id}/report`;

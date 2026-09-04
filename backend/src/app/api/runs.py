@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import (
     APIRouter,
@@ -10,16 +11,19 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.events import publish, subscribe, unsubscribe
+from app.api.report import render_report
 from app.api.schemas import RunCreate, RunDetail, RunSummary
 from app.core.config import settings
 from app.core.paths import resolve_target
 from app.db.models import Finding, Hypothesis, Invariant, Run, RunStatus
 from app.db.session import async_session_factory, get_session
+from app.pipeline.severity import severity_for
 from app.pipeline.stage1_state_model.builder import build_application_model
 from app.pipeline.stage1_state_model.schema import ApplicationModel
 from app.pipeline.stage2_invariants.extractor import extract_invariants
@@ -60,13 +64,35 @@ async def create_run(
 
 
 @router.get("", response_model=list[RunSummary])
-async def list_runs(session: AsyncSession = Depends(get_session)) -> list[Run]:
-    result = await session.execute(select(Run).order_by(Run.created_at.desc()))
-    return list(result.scalars().all())
+async def list_runs(session: AsyncSession = Depends(get_session)) -> list[RunSummary]:
+    result = await session.execute(
+        select(Run).options(selectinload(Run.findings)).order_by(Run.created_at.desc())
+    )
+    summaries = []
+    for run in result.scalars().all():
+        counts: dict[str, int] = {}
+        for finding in run.findings:
+            key = _with_severity(finding.data)["severity"]
+            counts[key] = counts.get(key, 0) + 1
+        summaries.append(
+            RunSummary.model_validate(run).model_copy(update={"severity_counts": counts})
+        )
+    return summaries
 
 
-@router.get("/{run_id}", response_model=RunDetail)
-async def get_run(run_id: int, session: AsyncSession = Depends(get_session)) -> RunDetail:
+def _with_severity(finding: dict[str, Any]) -> dict[str, Any]:
+    """Severity is derived, not stored — so findings written before it existed
+    still classify, and the rule lives in one place for the API, the report and
+    (Phase 10) the CLI."""
+    replay = finding.get("replay") or {}
+    return finding | {
+        "severity": severity_for(
+            finding.get("verdict"), finding.get("invariant_kind"), replay.get("outcome")
+        ).value
+    }
+
+
+async def _load_run(run_id: int, session: AsyncSession) -> RunDetail:
     run = await session.get(
         Run,
         run_id,
@@ -90,8 +116,20 @@ async def get_run(run_id: int, session: AsyncSession = Depends(get_session)) -> 
         application_model=run.application_model,
         invariants=[inv.data for inv in sorted(run.invariants, key=lambda x: x.id)],
         hypotheses=[h.data for h in sorted(run.hypotheses, key=lambda x: x.id)],
-        findings=[f.data for f in sorted(run.findings, key=lambda x: x.id)],
+        findings=[_with_severity(f.data) for f in sorted(run.findings, key=lambda x: x.id)],
     )
+
+
+@router.get("/{run_id}", response_model=RunDetail)
+async def get_run(run_id: int, session: AsyncSession = Depends(get_session)) -> RunDetail:
+    return await _load_run(run_id, session)
+
+
+@router.get("/{run_id}/report", response_class=HTMLResponse)
+async def get_run_report(run_id: int, session: AsyncSession = Depends(get_session)) -> HTMLResponse:
+    """Self-contained, shareable HTML report — printable to PDF from the browser."""
+    detail = await _load_run(run_id, session)
+    return HTMLResponse(render_report(detail.model_dump(mode="json")))
 
 
 @router.websocket("/{run_id}/events")

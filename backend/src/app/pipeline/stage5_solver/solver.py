@@ -56,6 +56,7 @@ def prove(
         return ProofResult(
             hypothesis_index=hypothesis_index,
             invariant_statement=invariant.statement,
+            invariant_kind=invariant.kind,
             verdict=verdict,
             reason=reason,
             unsat_core=unsat_core or [],

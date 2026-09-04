@@ -2,6 +2,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel
 
+from app.pipeline.stage2_invariants.schema import InvariantKind
 from app.pipeline.stage6_replay.schema import ReplayResult
 
 
@@ -31,6 +32,7 @@ class Witness(BaseModel):
 class ProofResult(BaseModel):
     hypothesis_index: int
     invariant_statement: str | None
+    invariant_kind: InvariantKind | None = None
     verdict: Verdict
     reason: str | None = None
     unsat_core: list[str] = []

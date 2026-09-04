@@ -1,16 +1,22 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useParams } from "react-router";
+import { EmptyState, ErrorState, Layout, Skeleton } from "@/components/Layout";
+import { SeverityBadge } from "@/components/SeverityBadge";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   getRun,
+  runReportUrl,
+  type Hypothesis,
   type ProofResult,
   type ReplayOutcome,
   type ReplayResult,
   type RunStatus,
   type Verdict,
 } from "@/lib/apiClient";
+import { severityRank } from "@/lib/severity";
 import { useRunEvents } from "@/lib/useRunEvents";
 
 const STATUS_VARIANT: Record<RunStatus, "default" | "secondary" | "destructive"> = {
@@ -20,113 +26,183 @@ const STATUS_VARIANT: Record<RunStatus, "default" | "secondary" | "destructive">
   failed: "destructive",
 };
 
-const VERDICT_VARIANT: Record<Verdict, "default" | "secondary" | "destructive" | "outline"> = {
-  sat: "default",
-  unsat: "secondary",
-  invalid: "outline",
-  unsupported: "outline",
-  unknown: "destructive",
-};
-
 const VERDICT_LABEL: Record<Verdict, string> = {
-  sat: "SAT · violation path proven",
-  unsat: "UNSAT · refuted",
+  sat: "Z3: violation path proven",
+  unsat: "Z3: refuted — no execution violates the invariant",
   invalid: "invalid hypothesis",
   unsupported: "unsupported invariant kind",
   unknown: "solver gave up",
 };
 
-const REPLAY_VARIANT: Record<ReplayOutcome, "default" | "secondary" | "destructive" | "outline"> =
-  {
-    confirmed: "destructive",
-    refuted: "secondary",
-    inconclusive: "outline",
-    error: "outline",
-  };
-
 const REPLAY_LABEL: Record<ReplayOutcome, string> = {
-  confirmed: "CONFIRMED against the live app",
-  refuted: "app enforced the rule",
-  inconclusive: "inconclusive",
-  error: "replay error",
+  confirmed: "Confirmed against the live app",
+  refuted: "App enforced the rule",
+  inconclusive: "Inconclusive",
+  error: "Replay error",
 };
+
+/** The pipeline's stages, in the order the backend publishes them. `refining` only
+ * appears when the counterexample loop actually runs another round. */
+const STAGES = [
+  { key: "invariants", label: "Invariants" },
+  { key: "hypotheses", label: "Hypotheses" },
+  { key: "solving", label: "Proving" },
+  { key: "replaying", label: "Replaying" },
+] as const;
+
+function StageProgress({ current, status }: { current?: string; status: RunStatus }) {
+  const done = status === "completed";
+  const activeIndex = STAGES.findIndex((s) => s.key === current);
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+      {STAGES.map((stage, i) => {
+        const state = done || (activeIndex > i && activeIndex !== -1) ? "done" : "pending";
+        const active = !done && i === activeIndex;
+        return (
+          <span key={stage.key} className="flex items-center gap-2">
+            {i > 0 && <span className="text-muted-foreground/40">›</span>}
+            <span
+              className={
+                active
+                  ? "font-medium"
+                  : state === "done"
+                    ? "text-muted-foreground"
+                    : "text-muted-foreground/50"
+              }
+            >
+              {active && (
+                <span className="bg-foreground mr-1.5 inline-block size-1.5 animate-pulse rounded-full align-middle" />
+              )}
+              {stage.label}
+            </span>
+          </span>
+        );
+      })}
+      {current === "refining" && (
+        <span className="text-muted-foreground">· refining from counterexamples</span>
+      )}
+    </div>
+  );
+}
 
 function ReplayTrace({ replay }: { replay: ReplayResult }) {
   return (
-    <div className="mt-2 space-y-1 border-t pt-2 text-xs">
-      <div className="flex items-center gap-2">
-        <Badge variant={REPLAY_VARIANT[replay.outcome]}>{REPLAY_LABEL[replay.outcome]}</Badge>
-        <span className="text-muted-foreground">{replay.base_url}</span>
+    <div className="mt-3 space-y-1.5 border-t pt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium">{REPLAY_LABEL[replay.outcome]}</span>
+        <span className="text-muted-foreground font-mono text-[11px]">{replay.base_url}</span>
       </div>
-      <p className="text-muted-foreground">{replay.reason}</p>
-      <div className="space-y-0.5 font-mono">
-        {replay.steps.map((s) => (
-          <div key={s.step} className="flex flex-wrap items-center gap-2">
-            <span className="text-muted-foreground w-6 shrink-0">{s.step}.</span>
-            <span>{s.method}</span>
-            <span className="truncate">{s.url}</span>
-            <span
-              className={
-                s.status !== null && s.status < 400 ? "text-destructive" : "text-muted-foreground"
-              }
-            >
-              {s.error ?? s.status}
-            </span>
-            {s.race_group !== null && s.started_offset_ms !== null && (
-              <span className="text-muted-foreground">+{s.started_offset_ms.toFixed(1)}ms</span>
-            )}
-          </div>
-        ))}
+      <p className="text-muted-foreground text-xs">{replay.reason}</p>
+      <div className="space-y-0.5 font-mono text-[11px]">
+        {replay.steps.map((s) => {
+          const succeeded = s.status !== null && s.status < 400;
+          const violating = replay.violating_steps.includes(s.step);
+          return (
+            <div key={s.step} className="flex flex-wrap items-center gap-2">
+              <span className="text-muted-foreground w-4 shrink-0 text-right">{s.step}.</span>
+              <span className="text-muted-foreground">{s.method}</span>
+              <span className="min-w-0 truncate">{s.url}</span>
+              <span
+                className={
+                  violating && succeeded
+                    ? "text-destructive font-semibold"
+                    : "text-muted-foreground"
+                }
+              >
+                {s.error ?? s.status}
+              </span>
+              {s.started_offset_ms !== null && (
+                <span className="text-muted-foreground" title="offset from the concurrent release">
+                  +{s.started_offset_ms.toFixed(2)}ms
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
       {replay.enforced_endpoints.length > 0 && (
-        <p className="text-muted-foreground">
-          enforced: {replay.enforced_endpoints.join(", ")}
+        <p className="text-muted-foreground text-xs">
+          Enforced, fed back into later rounds: {replay.enforced_endpoints.join(", ")}
         </p>
       )}
     </div>
   );
 }
 
-const STAGE_LABEL: Record<string, string> = {
-  invariants: "extracting invariants…",
-  hypotheses: "generating attack hypotheses…",
-  solving: "proving with Z3…",
-  replaying: "replaying proven attacks against the live app…",
-  refining: "refining hypotheses from counterexamples…",
-};
-
-function ProofTrace({ finding }: { finding: ProofResult }) {
+function Finding({ finding, hypothesis }: { finding: ProofResult; hypothesis?: Hypothesis }) {
+  const violating = new Set(finding.witness?.violating_steps ?? []);
   return (
-    <div className="mt-2 space-y-1 text-xs">
-      <div className="flex items-center gap-2">
-        <Badge variant={VERDICT_VARIANT[finding.verdict]}>{VERDICT_LABEL[finding.verdict]}</Badge>
-        <span className="text-muted-foreground">{finding.solve_time_ms.toFixed(1)} ms</span>
+    <div className="rounded-lg border p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <SeverityBadge severity={finding.severity} />
+        <span className="font-medium">{hypothesis?.resource ?? "—"}</span>
+        {finding.invariant_kind && <Badge variant="outline">{finding.invariant_kind}</Badge>}
+        <span className="text-muted-foreground ml-auto text-xs tabular-nums">
+          {finding.solve_time_ms.toFixed(1)} ms
+        </span>
       </div>
-      {finding.witness?.narrative.map((line) => (
-        <p key={line} className="font-mono">
-          {line}
+
+      {finding.invariant_statement && (
+        <p className="mt-2 text-sm">
+          <span className="text-muted-foreground">Invariant: </span>
+          {finding.invariant_statement}
         </p>
-      ))}
-      {finding.witness && (
-        <p className="text-muted-foreground">
-          witness:{" "}
-          {Object.entries(finding.witness.actors)
-            .map(([name, id]) => `${name}=${id}`)
-            .join(", ")}
-          {finding.witness.instances.map(
-            (i) => `; ${i.id} (${i.resource}) owned by ${i.owner}`,
+      )}
+
+      {hypothesis && (
+        <ol className="mt-3 space-y-1">
+          {hypothesis.steps.map((step) => (
+            <li key={step.step} className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge
+                variant={violating.has(step.step) ? "destructive" : "outline"}
+                className="shrink-0"
+              >
+                {step.step}. {step.actor}
+              </Badge>
+              {step.race_group !== null && (
+                <Badge variant="secondary" className="shrink-0">
+                  race {step.race_group}
+                </Badge>
+              )}
+              <span className="font-mono break-all">{step.endpoint_key}</span>
+              <span className="text-muted-foreground">{step.description}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+
+      <div className="mt-3 space-y-1 border-t pt-3">
+        <p className="text-xs font-medium">{VERDICT_LABEL[finding.verdict]}</p>
+        {finding.witness?.narrative.map((line) => (
+          <p key={line} className="font-mono text-[11px]">
+            {line}
+          </p>
+        ))}
+        {/* The narrative already spells out a race's interleaving; only fall back
+            to the raw event order when it doesn't. */}
+        {finding.witness &&
+          finding.witness.order.length > 0 &&
+          !finding.witness.narrative.some((l) => l.toLowerCase().includes("interleaving")) && (
+            <p className="text-muted-foreground font-mono text-[11px]">
+              interleaving: {finding.witness.order.join(" < ")}
+            </p>
           )}
-        </p>
-      )}
-      {finding.reason && <p className="text-muted-foreground">{finding.reason}</p>}
-      {finding.unsat_core.length > 0 && (
-        <p className="text-muted-foreground font-mono">core: {finding.unsat_core.join(", ")}</p>
-      )}
+        {finding.reason && <p className="text-muted-foreground text-xs">{finding.reason}</p>}
+        {finding.unsat_core.length > 0 && (
+          <p className="text-muted-foreground font-mono text-[11px]">
+            unsat core: {finding.unsat_core.join(", ")}
+          </p>
+        )}
+      </div>
+
       {finding.replay && <ReplayTrace replay={finding.replay} />}
+
       {finding.smtlib && (
-        <details>
-          <summary className="text-muted-foreground cursor-pointer">SMT-LIB</summary>
-          <pre className="bg-muted mt-1 max-h-64 overflow-auto rounded p-2 font-mono">
+        <details className="mt-3">
+          <summary className="text-muted-foreground hover:text-foreground cursor-pointer text-xs">
+            SMT-LIB problem
+          </summary>
+          <pre className="bg-muted mt-2 max-h-72 overflow-auto rounded p-3 font-mono text-[11px]">
             {finding.smtlib}
           </pre>
         </details>
@@ -135,20 +211,31 @@ function ProofTrace({ finding }: { finding: ProofResult }) {
   );
 }
 
-const KIND_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  create: "default",
-  read: "outline",
-  update: "secondary",
-  delete: "destructive",
-  action: "outline",
-};
+function Collapsible({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
+  return (
+    <Card>
+      <details>
+        <summary className="cursor-pointer list-none px-6 py-4">
+          <span className="font-semibold">{title}</span>
+          <span className="text-muted-foreground ml-2 text-sm tabular-nums">{count}</span>
+        </summary>
+        <CardContent>{children}</CardContent>
+      </details>
+    </Card>
+  );
+}
 
 export default function RunDetail() {
   const { id } = useParams<{ id: string }>();
   const runId = Number(id);
   const queryClient = useQueryClient();
 
-  const { data: run } = useQuery({
+  const {
+    data: run,
+    isPending,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ["run", runId],
     queryFn: () => getRun(runId),
     refetchInterval: (query) =>
@@ -168,129 +255,138 @@ export default function RunDetail() {
     }
   }, [events, runId, queryClient]);
 
-  if (!run) return <div className="p-8 text-muted-foreground">Loading…</div>;
+  if (error) {
+    return (
+      <Layout>
+        <ErrorState error={error} onRetry={() => void refetch()} />
+      </Layout>
+    );
+  }
+
+  if (isPending || !run) {
+    return (
+      <Layout>
+        <div className="space-y-4">
+          <Skeleton className="h-24" />
+          <Skeleton className="h-64" />
+        </div>
+      </Layout>
+    );
+  }
 
   const model = run.application_model;
-  const findingByIndex = new Map(run.findings.map((f) => [f.hypothesis_index, f]));
+  const running = run.status === "pending" || run.status === "running";
+  const findings = [...run.findings].sort(
+    (a, b) => severityRank(a.severity) - severityRank(b.severity),
+  );
+  const confirmed = findings.filter((f) => f.replay?.outcome === "confirmed").length;
 
   return (
-    <div className="mx-auto max-w-4xl p-8 space-y-4">
-      <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0">
-          <CardTitle>
-            Run #{run.id} — {run.target_name}
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            {run.status === "running" && currentStage && (
+    <Layout>
+      <div className="space-y-4">
+        <Card>
+          <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <CardTitle className="truncate">
+                Run #{run.id} — {run.target_name}
+              </CardTitle>
+              {running ? (
+                <div className="mt-2">
+                  <StageProgress current={currentStage} status={run.status} />
+                </div>
+              ) : (
+                model && (
+                  <p className="text-muted-foreground mt-1 text-sm">
+                    {Object.keys(model.resources).length} resources · {model.endpoints.length}{" "}
+                    endpoints · {run.invariants.length} invariants · {run.hypotheses.length}{" "}
+                    hypotheses
+                  </p>
+                )
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {run.status === "completed" && (
+                <Button asChild size="sm" variant="outline">
+                  <a href={runReportUrl(run.id)} target="_blank" rel="noreferrer">
+                    Report
+                  </a>
+                </Button>
+              )}
+              <Badge variant={STATUS_VARIANT[run.status]}>{run.status}</Badge>
+            </div>
+          </CardHeader>
+          {run.error && (
+            <CardContent>
+              <p className="text-destructive text-sm break-words">{run.error}</p>
+            </CardContent>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader className="flex-row items-center justify-between space-y-0">
+            <CardTitle>Findings</CardTitle>
+            {findings.length > 0 && (
               <span className="text-muted-foreground text-xs">
-                {STAGE_LABEL[currentStage] ?? currentStage}
+                {confirmed} confirmed against the live app
               </span>
             )}
-            <Badge variant={STATUS_VARIANT[run.status]}>{run.status}</Badge>
-          </div>
-        </CardHeader>
-        {run.error && (
-          <CardContent>
-            <p className="text-destructive text-sm">{run.error}</p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {findings.length === 0 ? (
+              running ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-20" />
+                  <Skeleton className="h-20" />
+                </div>
+              ) : (
+                <EmptyState
+                  title="No findings"
+                  hint="Nothing in this run produced a decidable proof. The hypotheses and invariants below show what was considered."
+                />
+              )
+            ) : (
+              findings.map((finding) => (
+                <Finding
+                  key={finding.hypothesis_index}
+                  finding={finding}
+                  hypothesis={run.hypotheses[finding.hypothesis_index]}
+                />
+              ))
+            )}
           </CardContent>
-        )}
-      </Card>
+        </Card>
 
-      {model && (
-        <>
-          <Card>
-            <CardHeader>
-              <CardTitle>{model.title}</CardTitle>
-            </CardHeader>
-            <CardContent className="text-muted-foreground flex gap-6 text-sm">
-              <span>{Object.keys(model.resources).length} resources</span>
-              <span>{model.endpoints.length} endpoints</span>
-              <span>{model.transitions.length} transitions</span>
-              <span>{run.invariants.length} invariants</span>
-              <span>{run.hypotheses.length} hypotheses</span>
-              <span>{run.findings.filter((f) => f.verdict === "sat").length} proven</span>
-              <span>
-                {run.findings.filter((f) => f.replay?.outcome === "confirmed").length} confirmed
-              </span>
-            </CardContent>
-          </Card>
-
-          {run.hypotheses.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Hypotheses</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {run.hypotheses.map((hyp, index) => (
-                  <div key={index} className="rounded-md border p-3">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{hyp.resource}</span>
-                      <span className="text-muted-foreground ml-auto text-xs">
-                        {Math.round(hyp.confidence * 100)}% confidence
-                      </span>
-                    </div>
-                    <p className="text-muted-foreground mt-1 text-xs italic">
-                      targets: {hyp.target_invariant_statement}
-                    </p>
-                    <div className="mt-2 space-y-1">
-                      {hyp.steps.map((step) => (
-                        <div key={step.step} className="flex items-start gap-2 text-xs">
-                          <Badge variant="outline" className="shrink-0">
-                            {step.step}. {step.actor}
-                          </Badge>
-                          {step.race_group !== null && (
-                            <Badge variant="secondary" className="shrink-0">
-                              race {step.race_group}
-                            </Badge>
-                          )}
-                          <span className="font-mono">{step.endpoint_key}</span>
-                          <span className="text-muted-foreground">{step.description}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="mt-2 text-sm">{hyp.expected_violation}</p>
-                    {findingByIndex.get(index) && (
-                      <ProofTrace finding={findingByIndex.get(index)!} />
+        {run.invariants.length > 0 && (
+          <Collapsible title="Invariants" count={run.invariants.length}>
+            <div className="space-y-3">
+              {run.invariants.map((inv) => (
+                <div key={`${inv.resource}-${inv.statement}`} className="rounded-md border p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{inv.resource}</span>
+                    <Badge variant="outline">{inv.kind}</Badge>
+                    {inv.kind === "single_use" && (
+                      <Badge variant="secondary">limit {inv.limit}</Badge>
                     )}
+                    <span className="text-muted-foreground ml-auto text-xs">
+                      {Math.round(inv.confidence * 100)}% confidence
+                    </span>
                   </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
+                  <p className="mt-1 text-sm">{inv.statement}</p>
+                  <p className="text-muted-foreground mt-1 text-xs">{inv.rationale}</p>
+                </div>
+              ))}
+            </div>
+          </Collapsible>
+        )}
 
-          {run.invariants.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Invariants</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {run.invariants.map((inv) => (
-                  <div key={`${inv.resource}-${inv.statement}`} className="rounded-md border p-3">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{inv.resource}</span>
-                      <Badge variant="outline">{inv.kind}</Badge>
-                      <span className="text-muted-foreground ml-auto text-xs">
-                        {Math.round(inv.confidence * 100)}% confidence
-                      </span>
-                    </div>
-                    <p className="mt-1 text-sm">{inv.statement}</p>
-                    <p className="text-muted-foreground mt-1 text-xs">{inv.rationale}</p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Resources</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
+        {model && (
+          <Collapsible title="Application model" count={Object.keys(model.resources).length}>
+            <div className="space-y-3">
               {Object.values(model.resources)
                 .sort((a, b) => b.endpoint_keys.length - a.endpoint_keys.length)
                 .map((resource) => (
                   <div key={resource.name} className="rounded-md border p-3">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium">{resource.name}</span>
                       {resource.id_params.map((p) => (
                         <Badge key={p} variant="outline">
@@ -302,9 +398,19 @@ export default function RunDetail() {
                         {resource.endpoint_keys.length === 1 ? "" : "s"}
                       </span>
                     </div>
+                    {resource.race_evidence.length > 0 && (
+                      <div className="mt-2 space-y-0.5 font-mono text-[11px]">
+                        <span className="text-muted-foreground">check-then-act evidence</span>
+                        {resource.race_evidence.map((line) => (
+                          <div key={line} className="break-all">
+                            {line}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {resource.ownership_evidence.length > 0 && (
-                      <div className="text-muted-foreground mt-2 space-y-0.5 font-mono text-xs">
-                        {resource.ownership_evidence.map((line) => (
+                      <div className="text-muted-foreground mt-2 space-y-0.5 font-mono text-[11px]">
+                        {resource.ownership_evidence.slice(0, 4).map((line) => (
                           <div key={line} className="truncate">
                             {line}
                           </div>
@@ -313,30 +419,10 @@ export default function RunDetail() {
                     )}
                   </div>
                 ))}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Transitions</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1">
-              {model.transitions.map((t) => (
-                <div
-                  key={t.endpoint_key}
-                  className="flex items-center gap-2 font-mono text-xs"
-                >
-                  <Badge variant={KIND_VARIANT[t.kind]} className="w-16 justify-center">
-                    {t.kind}
-                  </Badge>
-                  <span className="text-muted-foreground w-24 truncate">{t.resource}</span>
-                  <span>{t.endpoint_key}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </>
-      )}
-    </div>
+            </div>
+          </Collapsible>
+        )}
+      </div>
+    </Layout>
   );
 }

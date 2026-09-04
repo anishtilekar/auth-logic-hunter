@@ -6,8 +6,8 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 
 ## STATUS
 
-**Current phase:** Phase 9 — Frontend Polish & Full Dashboard
-**Last updated:** 2026-09-03
+**Current phase:** Phase 10 — CLI + GitHub Action Wrapper
+**Last updated:** 2026-09-04
 **Repo:** [anishtilekar/auth-logic-hunter](https://github.com/anishtilekar/auth-logic-hunter) (private)
 **Resolved 2026-09-02 — closes the gap open since Phase 4:** a real live run against crAPI with `LLM_ENV=dev` (OpenRouter's free GLM 5.2) completed in ~11 seconds with 8 invariants and 6 hypotheses, both inspected in full and genuinely high quality — see "First successful live run" after Phase 5 for the details, including a hypothesis structurally identical to the hand-crafted BOLA example from Phase 5 that the model generated independently. Stage 2 and Stage 3's real output quality is no longer a leap of faith. **Still open, lower urgency now:** Together.ai's paid `prod` tier itself hasn't been tested with a real key yet — needed before an actual Phase 11 evaluation run. Note also that OpenRouter's free `dev` pool returns upstream `429`s in bursts: run #54 landed on the 15th attempt over ~30 minutes. Fine for iteration, not something to depend on for a timed demo.
 
@@ -22,7 +22,7 @@ AI-powered tool that finds multi-step and race-condition authorization/business-
 | 6 | Symbolic Encoder + Z3 Solver (Stages 4–5) | ✅ Done (API/frontend wiring not yet seen live — see Phase 6 note) |
 | 7 | Race-condition extension | ✅ Done (LLM-generated race confirmed live end to end) |
 | 8 | Replay/PoC Engine (Stage 6) | ✅ Done (crAPI auth automation deferred — see note) |
-| 9 | Frontend polish & full dashboard | ⬜ Not started |
+| 9 | Frontend polish & full dashboard | ✅ Done |
 | 10 | CLI + GitHub Action wrapper | ⬜ Not started |
 | 11 | Evaluation vs. baselines | ⬜ Not started |
 | 12 | Writeup, demo, final polish | ⬜ Not started |
@@ -330,6 +330,16 @@ Tasks:
 
 **Full pipeline verified live (later on 2026-09-03):** after four attempts failed at Stage 2 on an upstream `429` from OpenRouter's shared free pool (surfaced cleanly into `run.error` as designed), a fifth plain `POST /runs` with `LLM_ENV=dev` completed in ~20 seconds: 5 invariants (including a correctly-identified `role_required` admin-video rule and a correctly *non*-ownership call on community posts), 5 hypotheses, 5 findings — every LLM-generated chain bound to the real crAPI model with zero `invalid`/`unsupported` verdicts, and Z3 proved all five `sat` with concrete witnesses (video read+delete, video update, vehicle location via the list-then-use shape, order read+return, order update). Rendered in the browser with per-hypothesis proof traces. Stage 2 -> 3 -> 4 -> 5 handoff is no longer an open item.
 
+### Docker Desktop startup failure — root-caused and scripted around (updated 2026-09-04)
+
+**Recurred on 2026-09-04, and the earlier diagnosis was incomplete.** The first analysis blamed the Docker AI / Model Runner feature, because the crash named its socket (`%LOCALAPPDATA%\Docker\run\dockerInference`). Disabling `EnableDockerAI` did stop *that* socket from being created — and the crash immediately reappeared on a different one, the Secrets Engine's `%LOCALAPPDATA%\docker-secrets-engine\engine.sock`. So the bug is not tied to any one feature: **Docker Desktop 4.73 leaves its AF_UNIX socket files behind on unclean exit, and cannot remove them on the next start**, aborting the backend with `starting services: initializing <X> Engine: listening on unix://...: remove ...: The file cannot be accessed by the system`. "Reset to factory defaults" does not help, because it never touches these paths — which is why it kept coming back.
+
+Established by testing rather than assumed: the leftover files cannot be deleted, renamed, or cleared even with **every** Docker process stopped and WSL shut down, so it is not a held handle — the directory entry itself is unusable. The one operation that works is renaming the *parent directory* aside; Docker then recreates a clean one.
+
+One correction worth recording, because it invalidated the obvious detection approach: `fsutil reparsepoint query` returns `Error 1920` for these files **whether they are stale leftovers or live sockets of a perfectly healthy running Docker** — verified against a running daemon. So it cannot distinguish the two, and a first version of the script that used it as a corruption test was checking nothing. The script now uses a rule that actually holds: if the daemon is not responding, anything still sitting in those directories is by definition a leftover.
+
+**Fix:** [`scripts/start-docker.ps1`](scripts/start-docker.ps1) — no-ops if the daemon is already up, otherwise stops lingering processes, moves the stale socket directories aside, launches Docker and waits. Use it instead of the Start-menu shortcut; the README points at it. The moved-aside directories can never be deleted (same broken entries) and accumulate harmlessly; only `chkdsk C: /F` would clear them.
+
 ### Docker Desktop startup failure — root-caused and fixed (2026-09-03)
 
 Docker Desktop 4.73 crashed on every start with "starting services: initializing Inference manager: listening on unix://…\Docker\run\dockerInference: remove …: The file cannot be accessed by the system." A factory reset didn't help, and after clearing that one file it simply crashed on the next socket instead (`…\docker-secrets-engine\engine.sock`) — so the specific file was never the problem.
@@ -397,15 +407,23 @@ Tasks:
 **Owner:** Sakshi.
 
 Tasks:
-- [ ] Dashboard: run history, severity breakdown (Recharts), quick stats
-- [ ] Run Detail: live per-stage progress (via WS), findings list with proof traces + replay evidence, expandable hypothesis queue
-- [ ] Findings/report export (PDF or shareable HTML)
-- [ ] Responsive layout, sensible empty/error/loading states
-- [ ] Polish pass against a real UX bar (Strix's dashboard is a reasonable reference point for what "proper" looks like, not to copy but to benchmark against)
-- [ ] Update root README with final "how to run this on localhost" steps
-- [ ] Commit, push
+- [x] Dashboard: run history, severity breakdown (Recharts), quick stats
+- [x] Run Detail: live per-stage progress (via WS), findings list with proof traces + replay evidence, collapsible invariants and application model
+- [x] Findings/report export — self-contained HTML at `GET /runs/{id}/report`, printable to PDF
+- [x] Responsive layout, sensible empty/error/loading states
+- [x] Polish pass
+- [x] Update root README with final "how to run this on localhost" steps
+- [x] Commit, push
 
-**What's actually built:** *(fill in when done)*
+**What's actually built:** The dashboard is now findings-first rather than a data dump. The organising idea is **severity, derived rather than guessed** (`pipeline/severity.py`): a confirmed `single_use` violation is `critical` (a coupon really was spent twice), a confirmed ownership/role violation is `high`, a chain Z3 proved but nobody replayed is `medium`, and anything the solver refuted *or the live app blocked* is `info`. That last rule is the one that matters for this project's argument — replay disagreeing with the proof must de-escalate the finding, never leave it looking exploitable — and it is pinned by its own test. Severity is computed on read, not stored, so findings written by earlier phases still classify instead of erroring; a test covers that too.
+
+Dashboard: quick stats (runs, findings, confirmed-exploitable, refuted), a Recharts severity breakdown, and run history with per-severity chips. `RunSummary` gained server-computed `severity_counts` specifically so the list endpoint alone can render the breakdown — the alternative was fetching every run's detail on the index page. Run Detail leads with findings sorted most-severe-first, each showing the chain (race steps badged, violating steps highlighted), the Z3 verdict with witness narrative and unsat core, the live replay evidence with per-request status and concurrent release offsets, and the SMT-LIB problem behind a disclosure. Invariants and the application model moved into collapsibles below, where they belong once findings are the headline. Live runs show a per-stage progress line driven by the existing WS events.
+
+**Report export** is server-rendered HTML with no JS, no external assets and nothing to fetch (asserted by test), so it survives being emailed, archived as a CI artifact, or printed to PDF. It is rendered server-side deliberately: Phase 10's CLI and GitHub Action can emit the identical artifact without a browser. Content is escaped rather than interpolated, with a test that an invariant statement containing markup comes out inert.
+
+**Verified live, not just built:** the whole stack was brought up (Postgres, backend, dashboard, the seeded coupon service) and a fresh run confirmed the severity path end to end — a replay-confirmed race classified `critical`, its sequential twin `unsat` → `info`, both rendering correctly in the dashboard and in the report, at desktop and mobile widths. One real bug found by looking at the rendered output rather than by a test: the race interleaving was printed twice, because the witness narrative already spells it out and the raw `witness.order` was being rendered as well. Fixed in both the dashboard and the report, with a test pinning that the fallback still appears when the narrative omits it.
+
+**Also fixed here, since it was blocking every run:** Docker Desktop's stale-socket startup crash, properly this time — see the "Docker Desktop startup failure" note below.
 
 ---
 

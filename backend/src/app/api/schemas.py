@@ -22,6 +22,9 @@ class RunSummary(BaseModel):
     error: str | None
     created_at: datetime
     completed_at: datetime | None
+    severity_counts: dict[str, int] = {}
+    """Findings by derived severity. Computed on read so the dashboard can show a
+    breakdown from the list endpoint alone, without fetching every run's detail."""
 
     model_config = {"from_attributes": True}
 
@@ -31,3 +34,4 @@ class RunDetail(RunSummary):
     invariants: list[dict[str, Any]]
     hypotheses: list[dict[str, Any]]
     findings: list[dict[str, Any]]
+    """Each carries a derived `severity` added on read (see api.runs._with_severity)."""
